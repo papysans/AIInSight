@@ -289,6 +289,7 @@ class JobManager:
         if cards is not None:
             job.result.cards = AnalysisCards(
                 title_card=cards.get("title_card"),
+                impact_card=cards.get("impact_card"),
                 debate_timeline=cards.get("debate_timeline"),
                 trend_analysis=cards.get("trend_analysis"),
                 platform_radar=cards.get("platform_radar"),

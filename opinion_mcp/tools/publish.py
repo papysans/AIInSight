@@ -72,12 +72,14 @@ async def collect_images_for_publish(
             cards = result.cards
             if cards.title_card:
                 all_images.append(cards.title_card)
+            if getattr(cards, "impact_card", None):
+                all_images.append(cards.impact_card)
+            if cards.platform_radar:
+                all_images.append(cards.platform_radar)
             if cards.debate_timeline:
                 all_images.append(cards.debate_timeline)
             if cards.trend_analysis:
                 all_images.append(cards.trend_analysis)
-            if cards.platform_radar:
-                all_images.append(cards.platform_radar)
     
     # 添加 AI 生成图片
     if result.ai_images:

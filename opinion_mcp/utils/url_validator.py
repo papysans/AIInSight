@@ -8,6 +8,7 @@ Validates: Requirements 1.4, 3.3
 """
 
 import asyncio
+import base64
 import os
 import uuid
 from pathlib import Path
@@ -21,6 +22,19 @@ from loguru import logger
 
 # 图片缓存目录
 IMAGE_CACHE_DIR = Path("outputs/image_cache")
+
+
+def _is_data_image_url(value: str) -> bool:
+    return isinstance(value, str) and value.startswith("data:image/")
+
+
+def _is_existing_local_path(value: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    parsed = urlparse(value)
+    if parsed.scheme:
+        return False
+    return Path(value).expanduser().exists()
 
 
 @dataclass
@@ -72,6 +86,22 @@ async def validate_url(
         )
     
     url = url.strip()
+
+    if _is_data_image_url(url):
+        return URLValidationResult(
+            url=url,
+            valid=True,
+            status_code=200,
+            response_time_ms=0,
+        )
+
+    if _is_existing_local_path(url):
+        return URLValidationResult(
+            url=str(Path(url).expanduser().resolve()),
+            valid=True,
+            status_code=200,
+            response_time_ms=0,
+        )
     
     # URL 格式检查
     try:
@@ -256,6 +286,44 @@ async def download_image(
     # 确保缓存目录存在
     save_dir = cache_dir or IMAGE_CACHE_DIR
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    if _is_existing_local_path(url):
+        local_path = str(Path(url).expanduser().resolve())
+        return ImageDownloadResult(
+            original_url=url,
+            local_path=local_path,
+            success=True,
+        )
+
+    if _is_data_image_url(url):
+        try:
+            header, encoded = url.split(",", 1)
+            if ";base64" not in header:
+                raise ValueError("仅支持 base64 data URL")
+
+            if "image/png" in header:
+                ext = ".png"
+            elif "image/webp" in header:
+                ext = ".webp"
+            elif "image/gif" in header:
+                ext = ".gif"
+            else:
+                ext = ".jpg"
+
+            filename = f"{uuid.uuid4().hex[:12]}{ext}"
+            local_path = save_dir / filename
+            local_path.write_bytes(base64.b64decode(encoded))
+            return ImageDownloadResult(
+                original_url=url,
+                local_path=str(local_path.resolve()),
+                success=True,
+            )
+        except Exception as e:
+            return ImageDownloadResult(
+                original_url=url,
+                success=False,
+                error=f"data URL 解析失败: {str(e)}",
+            )
     
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:

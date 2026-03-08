@@ -195,6 +195,8 @@ async def validate_publish(
         cards = result.cards
         if cards.title_card:
             image_urls.append(cards.title_card)
+        if getattr(cards, "impact_card", None):
+            image_urls.append(cards.impact_card)
         if cards.debate_timeline:
             image_urls.append(cards.debate_timeline)
         if cards.trend_analysis:

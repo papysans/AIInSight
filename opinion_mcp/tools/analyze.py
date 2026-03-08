@@ -29,6 +29,15 @@ from opinion_mcp.services.backend_client import backend_client
 from opinion_mcp.services.job_manager import job_manager
 from opinion_mcp.services.webhook_manager import webhook_manager
 
+DEFAULT_TOPIC_CARD_TYPES = ["title", "impact", "radar", "timeline"]
+CARD_STORAGE_KEY_MAP = {
+    "title": "title_card",
+    "impact": "impact_card",
+    "radar": "platform_radar",
+    "timeline": "debate_timeline",
+    "trend": "trend_analysis",
+}
+
 
 # ============================================================
 # 5.2 analyze_topic 工具 - 启动分析任务
@@ -943,7 +952,7 @@ async def generate_topic_cards(
 
     Args:
         job_id: 任务 ID
-        card_types: 卡片类型列表 ["title", "hot-topic"]，留空使用默认
+        card_types: 卡片类型列表 ["title", "impact", "radar", "timeline"]，留空使用默认
 
     Returns:
         Dict 包含各卡片的 data URL
@@ -957,7 +966,7 @@ async def generate_topic_cards(
         return {"success": False, "error": f"任务尚无结果: {job_id}"}
 
     result = job.result
-    types = card_types or ["title", "hot-topic"]
+    types = card_types or DEFAULT_TOPIC_CARD_TYPES
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -966,10 +975,13 @@ async def generate_topic_cards(
                 json={
                     "title": result.title or job.topic,
                     "summary": result.summary or "",
+                    "insight": result.insight or "",
                     "tags": (result.copywriting.tags if result.copywriting else [])[:6],
                     "source_count": len(result.sources_analyzed),
                     "score": 0.0,
                     "sources": result.sources_analyzed[:4],
+                    "source_stats": result.source_stats,
+                    "output_file": result.output_file,
                     "card_types": types,
                 },
             )
@@ -982,7 +994,16 @@ async def generate_topic_cards(
         card_urls = {}
         for card_type, card_data in cards.items():
             if isinstance(card_data, dict):
-                card_urls[card_type] = card_data.get("data_url") or card_data.get("url", "")
+                storage_key = CARD_STORAGE_KEY_MAP.get(card_type)
+                if not storage_key:
+                    continue
+                card_urls[storage_key] = (
+                    card_data.get("output_path")
+                    or card_data.get("image_url")
+                    or card_data.get("image_data_url")
+                    or card_data.get("data_url")
+                    or card_data.get("url", "")
+                )
 
         job_manager.store_result(job_id, cards=card_urls)
 

@@ -80,6 +80,7 @@ class CopywritingUpdate(BaseModel):
 class AnalysisCards(BaseModel):
     """数据卡片 URL"""
     title_card: Optional[str] = Field(default=None, description="标题卡片 URL")
+    impact_card: Optional[str] = Field(default=None, description="影响判断卡 URL")
     debate_timeline: Optional[str] = Field(default=None, description="辩论时间线 URL")
     trend_analysis: Optional[str] = Field(default=None, description="趋势分析 URL")
     platform_radar: Optional[str] = Field(default=None, description="来源分布雷达图 URL（字段名为兼容保留）")

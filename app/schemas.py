@@ -63,6 +63,34 @@ class ConfigUpdateRequest(BaseModel):
 
 # --- 前端可写入的用户设置（落盘到 cache/，不影响 .env） ---
 
+class UserLLMApi(BaseModel):
+    id: Optional[int] = None
+    provider: str
+    providerKey: str
+    url: Optional[str] = None
+    key: str
+    model: Optional[str] = None
+    active: Optional[bool] = True
+
+
+class VolcengineConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    image_count: Optional[int] = 2
+
+
+class UserSettingsResponse(BaseModel):
+    llm_apis: List[UserLLMApi] = Field(default_factory=list)
+    volcengine: Optional[VolcengineConfig] = None
+    agent_llm_overrides: Dict[str, Union[str, Dict[str, Any]]] = Field(default_factory=dict)
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    llm_apis: Optional[List[UserLLMApi]] = None
+    volcengine: Optional[VolcengineConfig] = None
+    agent_llm_overrides: Optional[Dict[str, Union[str, Dict[str, Any]]]] = None
+
 # --- 输出文件相关 Schema ---
 class OutputFileInfo(BaseModel):
     filename: str
@@ -185,11 +213,15 @@ class TopicCardsRequest(BaseModel):
     """话题分析卡片生成请求"""
     title: str = ""
     summary: str = ""
+    insight: str = ""
     tags: List[str] = Field(default_factory=list)
     source_count: int = 0
     score: float = 0.0
     sources: List[str] = Field(default_factory=list)
-    card_types: List[str] = Field(default_factory=lambda: ["title", "hot-topic"])
+    source_stats: Dict[str, int] = Field(default_factory=dict)
+    output_file: Optional[str] = None
+    timeline: List[Dict[str, Any]] = Field(default_factory=list)
+    card_types: List[str] = Field(default_factory=lambda: ["title", "impact", "radar", "timeline"])
 
 
 # ============================================================
@@ -199,7 +231,7 @@ class TopicCardsRequest(BaseModel):
 class CardRenderRequest(BaseModel):
     """通用卡片渲染请求基类"""
     model_config = ConfigDict(extra="allow")
-    card_type: str  # "title" | "radar" | "timeline" | "trend" | "daily_rank"
+    card_type: str  # "title" | "impact" | "radar" | "timeline" | "trend" | "daily_rank"
 
 
 class TitleCardRenderRequest(BaseModel):
@@ -244,6 +276,17 @@ class HotTopicCardRenderRequest(BaseModel):
     score: float = 0.0
     date: Optional[str] = None
     sources: List[str] = Field(default_factory=list)
+
+
+class ImpactCardRenderRequest(BaseModel):
+    """单话题影响与跟进卡渲染请求"""
+    title: str
+    summary: str = ""
+    insight: str = ""
+    signals: List[str] = Field(default_factory=list)
+    actions: List[str] = Field(default_factory=list)
+    confidence: str = ""
+    tags: List[str] = Field(default_factory=list)
 
 
 class CardRenderResponse(BaseModel):

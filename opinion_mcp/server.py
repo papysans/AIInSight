@@ -291,7 +291,7 @@ MCP_TOOLS: List[MCPTool] = [
     ),
     MCPTool(
         name="generate_topic_cards",
-        description="为已完成的话题分析生成可视化卡片（标题卡、热点卡等）。分析完成后调用此工具生成图片，再发布到小红书。",
+        description="为已完成的话题分析生成可视化卡片。默认生成标题卡、影响判断卡、证据雷达卡和辩论演化卡，可按需补充热点详情卡。",
         inputSchema=MCPToolInput(
             type="object",
             properties={
@@ -302,7 +302,7 @@ MCP_TOOLS: List[MCPTool] = [
                 "card_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "卡片类型列表: title / hot-topic，留空使用默认"
+                    "description": "卡片类型列表: title / impact / radar / timeline / hot-topic，留空使用默认"
                 }
             },
             required=["job_id"]

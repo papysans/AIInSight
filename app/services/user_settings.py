@@ -99,7 +99,7 @@ def update_user_settings(
     *,
     llm_apis: Optional[List[Dict[str, Any]]] = None,
     volcengine: Optional[Dict[str, Any]] = None,
-    agent_llm_overrides: Optional[Dict[str, str]] = None,
+    agent_llm_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Partial update; returns the merged settings."""
     data = load_user_settings()
@@ -207,4 +207,3 @@ def get_agent_api_config(agent_name: str) -> Optional[Dict[str, Any]]:
                 }
     
     return None
-

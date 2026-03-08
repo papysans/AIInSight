@@ -4,18 +4,26 @@ from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.schemas import (
     TopicAnalysisRequest, AgentState, ConfigResponse, ConfigUpdateRequest,
+    UserSettingsResponse, UserSettingsUpdateRequest,
     OutputFileListResponse, OutputFileInfo, OutputFileContentResponse,
     WorkflowStatusResponse, LLMProviderConfig,
     XhsPublishRequest,
     TitleCardRenderRequest, RadarCardRenderRequest,
-    TimelineCardRenderRequest, TrendCardRenderRequest,
+    TimelineCardRenderRequest, TrendCardRenderRequest, ImpactCardRenderRequest,
     DailyRankCardRenderRequest, HotTopicCardRenderRequest, CardRenderResponse,
     AiDailyCollectRequest, AiDailyResponse, AiDailyTopicDetailResponse,
     AiDailyAnalyzeRequest, AiDailyCardsRequest, AiDailyPublishRequest,
     AiDailyRankingCardsRequest, AiDailyRankingPublishRequest,
+    TopicCardsRequest,
 )
 from app.services.workflow import app_graph
 from app.services.workflow_status import workflow_status
+from app.services.user_settings import load_user_settings, update_user_settings
+from app.services.topic_card_builder import (
+    build_topic_impact_payload,
+    build_topic_radar_payload,
+    build_topic_timeline,
+)
 from app.config import settings
 from pathlib import Path
 from datetime import datetime
@@ -163,6 +171,59 @@ async def update_config(request: ConfigUpdateRequest):
         "message": f"配置已更新: {', '.join(updated_fields)}",
         "updated_fields": updated_fields,
     }
+
+
+@router.get("/user-settings", response_model=UserSettingsResponse)
+async def get_user_settings():
+    """获取前端可写入的用户设置（存储在 cache/user_settings.json）"""
+    data = load_user_settings()
+    return UserSettingsResponse(
+        llm_apis=data.get("llm_apis") or [],
+        volcengine=data.get("volcengine"),
+        agent_llm_overrides=data.get("agent_llm_overrides") or {},
+    )
+
+
+@router.put("/user-settings", response_model=UserSettingsResponse)
+async def put_user_settings(request: UserSettingsUpdateRequest):
+    """更新前端可写入的用户设置（部分更新）"""
+    if request.llm_apis is not None:
+        for api in request.llm_apis:
+            provider_key = api.providerKey
+            model = api.model
+            if model and provider_key and not settings.validate_model(provider_key, model):
+                available_models = settings.get_models_for_provider(provider_key)
+                model_names = [item["id"] for item in available_models] if available_models else []
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"模型 {model} 在提供商 {provider_key} 中无效。可用模型: {', '.join(model_names)}",
+                )
+
+    if request.agent_llm_overrides is not None:
+        for agent_key, override in request.agent_llm_overrides.items():
+            if not isinstance(override, dict):
+                continue
+            provider = override.get("provider")
+            model = override.get("model")
+            if provider and model and not settings.validate_model(provider, model):
+                available_models = settings.get_models_for_provider(provider)
+                model_names = [item["id"] for item in available_models] if available_models else []
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Agent {agent_key} 的模型 {model} 在提供商 {provider} 中无效。可用模型: {', '.join(model_names)}",
+                )
+
+    merged = update_user_settings(
+        llm_apis=[api.model_dump() for api in request.llm_apis] if request.llm_apis is not None else None,
+        volcengine=request.volcengine.model_dump() if request.volcengine is not None else None,
+        agent_llm_overrides=request.agent_llm_overrides,
+    )
+
+    return UserSettingsResponse(
+        llm_apis=merged.get("llm_apis") or [],
+        volcengine=merged.get("volcengine"),
+        agent_llm_overrides=merged.get("agent_llm_overrides") or {},
+    )
 
 
 @router.get("/outputs", response_model=OutputFileListResponse)
@@ -385,6 +446,21 @@ async def render_title_card(request: TitleCardRenderRequest):
     return CardRenderResponse(**result)
 
 
+@router.post("/cards/impact", response_model=CardRenderResponse)
+async def render_impact_card(request: ImpactCardRenderRequest):
+    """渲染影响判断卡"""
+    result = await card_render_client.render_impact(
+        title=request.title,
+        summary=request.summary,
+        insight=request.insight,
+        signals=request.signals,
+        actions=request.actions,
+        confidence=request.confidence,
+        tags=request.tags,
+    )
+    return CardRenderResponse(**result)
+
+
 @router.post("/cards/radar", response_model=CardRenderResponse)
 async def render_radar_card(request: RadarCardRenderRequest):
     """渲染雷达图卡"""
@@ -444,13 +520,45 @@ async def render_hot_topic_card(request: HotTopicCardRenderRequest):
 # ============================================================
 
 @router.post("/topic/cards")
-async def topic_cards(request: TopicCardsRequest):
+async def generate_topic_cards(request: TopicCardsRequest):
     """为话题分析结果生成可视化卡片"""
     cards = {}
+    radar_payload = build_topic_radar_payload(
+        source_stats=request.source_stats,
+        fallback_sources=request.sources,
+    )
+    timeline_payload = build_topic_timeline(
+        output_file=request.output_file,
+        timeline=request.timeline,
+        title=request.title,
+        summary=request.summary,
+        insight=request.insight,
+    )
+    impact_payload = build_topic_impact_payload(
+        title=request.title,
+        summary=request.summary,
+        insight=request.insight,
+        tags=request.tags,
+        source_stats=request.source_stats,
+        timeline=timeline_payload,
+    )
+
     for ct in request.card_types:
         if ct == "title":
             result = await card_render_client.render_title(title=request.title)
             cards["title"] = CardRenderResponse(**result)
+        elif ct == "impact":
+            result = await card_render_client.render_impact(**impact_payload)
+            cards["impact"] = CardRenderResponse(**result)
+        elif ct == "radar":
+            result = await card_render_client.render_radar(
+                labels=radar_payload["labels"],
+                datasets=radar_payload["datasets"],
+            )
+            cards["radar"] = CardRenderResponse(**result)
+        elif ct == "timeline":
+            result = await card_render_client.render_timeline(timeline=timeline_payload)
+            cards["timeline"] = CardRenderResponse(**result)
         elif ct == "hot-topic":
             result = await card_render_client.render_hot_topic(
                 title=request.title,

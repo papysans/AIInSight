@@ -48,7 +48,7 @@ class CardRenderClient:
             image_bytes = base64.b64decode(encoded)
             output_path = self._build_output_path(card_type, payload)
             output_path.write_bytes(image_bytes)
-            result["output_path"] = str(output_path)
+            result["output_path"] = str(output_path.resolve())
         except Exception as exc:
             logger.warning(f"[CardRenderClient] Failed to persist preview for {card_type}: {exc}")
 
@@ -59,7 +59,7 @@ class CardRenderClient:
         Render a card via the renderer service.
 
         Args:
-            card_type: "title" | "radar" | "timeline" | "trend" | "daily_rank" | "hot_topic"
+            card_type: "title" | "impact" | "radar" | "timeline" | "trend" | "daily_rank" | "hot_topic"
             payload: Data required by the specific renderer.
 
         Returns:
@@ -88,6 +88,26 @@ class CardRenderClient:
             "emoji": emoji,
             "theme": theme,
             "emojiPos": (emoji_position or {}).get("pos", "bottom-right"),
+        })
+
+    async def render_impact(
+        self,
+        title: str,
+        summary: str,
+        insight: str,
+        signals: List[str],
+        actions: List[str],
+        confidence: str = "",
+        tags: Optional[List[str]] = None,
+    ) -> dict:
+        return await self.render("impact", {
+            "title": title,
+            "summary": summary,
+            "insight": insight,
+            "signals": signals,
+            "actions": actions,
+            "confidence": confidence,
+            "tags": tags or [],
         })
 
     async def render_radar(self, labels: List[str], datasets: List[dict]) -> dict:

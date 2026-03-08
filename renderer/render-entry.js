@@ -1,4 +1,5 @@
 import { renderTitleCard } from './src/renderers/title_card_renderer.js'
+import { renderImpactCard } from './src/renderers/impact_card_renderer.js'
 import { renderRadarCard } from './src/renderers/radar_card_renderer.js'
 import { renderTimelineCard } from './src/renderers/timeline_card_renderer.js'
 import { renderTrendCard } from './src/renderers/trend_card_renderer.js'
@@ -7,6 +8,7 @@ import { renderHotTopicCard } from './src/renderers/hot_topic_renderer.js'
 
 const renderers = {
   title: renderTitleCard,
+  impact: renderImpactCard,
   radar: renderRadarCard,
   timeline: renderTimelineCard,
   trend: renderTrendCard,
