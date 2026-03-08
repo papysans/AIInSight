@@ -161,6 +161,50 @@ python -m opinion_mcp.server --host 0.0.0.0 --port 18061
 - `XHS_MCP_URL`
   - 启用小红书发布
 
+### 小红书发布依赖
+
+AIInSight 当前默认把 `xiaohongshu-mcp` 作为**宿主机侧服务**运行，再由 Docker 内的 `api` / `mcp` 通过 `host.docker.internal:18060/mcp` 调用。
+
+推荐做法：
+
+1. 在宿主机启动 `./scripts/start-xhs-mcp.sh`
+2. 保持 `docker-compose.yml` 里的 `XHS_MCP_URL=http://host.docker.internal:18060/mcp`
+3. 用 `GET /api/xhs/status` 或 `validate_publish` 检查服务和登录状态
+4. 可用 `./scripts/check-xhs-mcp.sh` 一键检查端口、登录状态和 cookies
+5. 可用 `./scripts/open-xhs-login-qrcode.sh` 本地拉起二维码并扫码登录
+6. 如果 XHS MCP 部署在云端，可用 `./scripts/login-xhs-cloud.sh --url https://<your-host>/mcp`
+7. 如果你希望前端或 Agent 直接拿到二维码地址，可调用 `GET /api/xhs/login-qrcode`
+
+说明：
+
+- 当前仓库没有内置 `xiaohongshu-mcp` 二进制
+- 启动脚本会优先查找你本机已有的安装或源码目录
+- 首次登录仍建议在宿主机完成，不建议把这一步硬塞进 AIInSight 的 Docker 链路
+- 二维码脚本默认请求 `http://127.0.0.1:18060/mcp`，如果 XHS MCP 已部署在云端，可先设置 `XHS_MCP_URL=https://<your-host>/mcp`
+- 云端场景可直接运行 `./scripts/login-xhs-cloud.sh --host xhs.example.com`，脚本会在本机打开二维码，但实际登录态会写入远端 XHS MCP 所在环境
+- `PUBLIC_API_BASE_URL` 用于把 `/api/xhs/login-qrcode` 返回的二维码地址补成可访问的公网 URL
+
+### 可选：XHS sidecar 模式
+
+如果你想研究把 `xiaohongshu-mcp` 也挂进 Docker，而不替换当前稳定路径，可以使用额外的 compose overlay：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.xhs.yml up -d
+```
+
+这个 overlay 会：
+
+- 新增 `xhs-mcp` sidecar 容器
+- 把 `api` / `mcp` 的 `XHS_MCP_URL` 从宿主机地址改成 `http://xhs-mcp:18060/mcp`
+- 把 cookies 和上传图片挂到 `./runtime/xhs/data` 与 `./runtime/xhs/images`
+
+注意：
+
+- 这是可选实验路径，不替换当前宿主机启动方案
+- 首次登录仍需要人工完成，建议通过上游工具或 MCP Inspector 获取二维码并登录
+- 也可以直接在本机运行 `./scripts/open-xhs-login-qrcode.sh` 拉起二维码
+- 默认显式指定 `linux/amd64`，在 Apple Silicon 上通常依赖 Docker Desktop 的架构兼容层
+
 ## 主要接口
 
 ### MCP 工具

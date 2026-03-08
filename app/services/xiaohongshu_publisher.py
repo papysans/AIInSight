@@ -9,7 +9,10 @@ import asyncio
 import base64
 import httpx
 import os
+import re
 import tempfile
+from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
@@ -53,14 +56,54 @@ def _process_image(image: str) -> str:
 class XiaohongshuPublisher:
     """小红书 MCP 发布客户端"""
 
-    def __init__(self, mcp_url: str = "http://localhost:18060/mcp"):
-        self.mcp_url = mcp_url
+    def __init__(self, mcp_url: Optional[str] = None):
+        # Resolve the MCP endpoint at instantiation time so compose/env overrides
+        # such as the Docker sidecar URL are honored by the shared singleton.
+        self.mcp_url = mcp_url or os.getenv("XHS_MCP_URL", "http://localhost:18060/mcp")
         self._request_id = 0
 
     def _next_request_id(self) -> int:
         """生成下一个请求 ID"""
         self._request_id += 1
         return self._request_id
+
+    def _get_login_qrcode_dir(self) -> Path:
+        """返回登录二维码输出目录，并确保目录存在。"""
+        output_dir = Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login"))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    @staticmethod
+    def _extract_text_and_png(content: Any) -> tuple[str, Optional[str]]:
+        """从 MCP content 列表中提取说明文本和 PNG Base64。"""
+        message = ""
+        image_b64: Optional[str] = None
+
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text" and not message:
+                    message = part.get("text", "")
+                if part.get("type") == "image" and part.get("mimeType") == "image/png":
+                    image_b64 = part.get("data")
+
+        return message, image_b64
+
+    @staticmethod
+    def _extract_expiry(message: str) -> Optional[str]:
+        """从二维码提示文案中提取过期时间。"""
+        if not message:
+            return None
+
+        match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", message)
+        if not match:
+            return None
+
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").isoformat()
+        except ValueError:
+            return None
 
     async def _call_mcp(
         self,
@@ -208,7 +251,9 @@ class XiaohongshuPublisher:
         Returns:
             登录状态信息
         """
-        result = await self._call_mcp("check_login_status", timeout=10.0)
+        # The upstream MCP may take >10s to finish browser-backed status checks
+        # in Docker mode, so use a wider timeout to avoid false negatives.
+        result = await self._call_mcp("check_login_status", timeout=30.0)
 
         if result.get("success"):
             # 解析 MCP 返回的登录状态
@@ -233,6 +278,42 @@ class XiaohongshuPublisher:
             "success": False,
             "logged_in": False,
             "message": result.get("error", "登录状态检查失败"),
+        }
+
+    async def get_login_qrcode(self) -> Dict[str, Any]:
+        """
+        获取小红书登录二维码，并保存为本地 PNG 文件。
+
+        Returns:
+            包含二维码文件路径、文件名、提示文案和过期时间的字典
+        """
+        result = await self._call_mcp("get_login_qrcode", timeout=90.0)
+
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": result.get("error", "获取登录二维码失败"),
+            }
+
+        mcp_result = result.get("result", {})
+        message, image_b64 = self._extract_text_and_png(mcp_result.get("content"))
+        if not image_b64:
+            return {
+                "success": False,
+                "message": message or "未从 MCP 返回结果中提取到二维码图片",
+            }
+
+        output_dir = self._get_login_qrcode_dir()
+        filename = f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+        output_path = output_dir / filename
+        output_path.write_bytes(base64.b64decode(image_b64))
+
+        return {
+            "success": True,
+            "message": message or "请使用小红书 App 扫码登录",
+            "qr_filename": filename,
+            "qr_image_path": str(output_path.resolve()),
+            "expires_at": self._extract_expiry(message),
         }
 
     async def publish_content(
@@ -264,6 +345,31 @@ class XiaohongshuPublisher:
                 "success": False,
                 "error": "至少需要一张图片",
             }
+
+        is_available = await self.is_available()
+        if not is_available:
+            return {
+                "success": False,
+                "error": "小红书 MCP 服务未启动或无法连接",
+                "login_required": False,
+            }
+
+        login_status = await self.check_login_status()
+        if not login_status.get("logged_in"):
+            login_qrcode = await self.get_login_qrcode()
+            message = login_status.get("message") or "小红书当前未登录，请扫码后重试"
+            response: Dict[str, Any] = {
+                "success": False,
+                "error": message,
+                "message": message,
+                "login_required": True,
+            }
+            if login_qrcode.get("success"):
+                response["login_qrcode"] = login_qrcode
+                response["qr_image_path"] = login_qrcode.get("qr_image_path")
+                response["qr_filename"] = login_qrcode.get("qr_filename")
+                response["expires_at"] = login_qrcode.get("expires_at")
+            return response
 
         # Process images: convert Base64 data URLs to temp files
         processed_images = [_process_image(img) for img in images]

@@ -23,6 +23,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 | **M3** | **卡片生成后展示** | 调用卡片生成后，告知用户已生成哪些类型的卡片，并展示每张预览图的 `output_path` |
 | **M4** | **发布前必须确认** | 发布到小红书前必须获得用户明确确认 |
 | **M5** | **发布时优先复用现有卡片** | 如果用户已经生成过卡片，发布时沿用同一话题和卡片类型，避免重复生成 |
+| **M6** | **未登录时给二维码地址** | 若发布链路提示未登录，必须调用 `get_xhs_login_qrcode`，把 `qr_image_url` 或 `qr_image_route` 告诉用户 |
 
 ### 🔴 MUST NOT DO
 
@@ -102,8 +103,9 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 确认后：
 1. 如尚未生成卡片，调用 `generate_ai_daily_cards(topic_id, card_types)`
 2. 若返回了 `output_path`，必须把路径展示给用户，便于本地打开预览
-2. 调用 `publish_ai_daily(topic_id, card_types)`
-3. 返回发布结果与笔记链接
+3. 调用 `publish_ai_daily(topic_id, card_types)`
+4. 如果返回未登录或带有二维码字段，必须把二维码地址返回给用户，并等待扫码后再继续
+5. 发布成功时返回结果与笔记链接
 
 ### 4. `/publish-today` — 将今天整榜做成小红书图文
 
@@ -114,6 +116,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 4. 发布时调用 `publish_ai_daily_ranking(limit, card_types)`
 5. 默认卡片使用 `["title", "daily-rank"]`
 6. 发布前必须再次确认
+7. 如果未登录，调用 `get_xhs_login_qrcode` 并把二维码地址给用户
 
 ---
 
@@ -153,6 +156,12 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
   "topic_id": "topic_xxx",
   "card_types": ["title", "hot-topic"]
 }
+```
+
+### get_xhs_login_qrcode
+获取小红书登录二维码。
+```json
+{}
 ```
 
 ### generate_ai_daily_ranking_cards

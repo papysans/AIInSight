@@ -2,6 +2,7 @@
 MCP 发布工具
 
 包含小红书发布相关的 MCP 工具:
+- get_xhs_login_qrcode: 获取小红书登录二维码
 - publish_to_xhs: 将分析结果发布到小红书
 
 支持两种发布模式:
@@ -105,6 +106,12 @@ async def collect_images_for_publish(
 # ============================================================
 # 6.4 publish_to_xhs 工具 - 发布到小红书
 # ============================================================
+
+async def get_xhs_login_qrcode() -> Dict[str, Any]:
+    """获取小红书登录二维码信息。"""
+    logger.info("[get_xhs_login_qrcode] 获取登录二维码")
+    return await backend_client.get_xhs_login_qrcode()
+
 
 async def publish_to_xhs(
     job_id: str,
@@ -303,7 +310,7 @@ async def publish_to_xhs(
         if not publish_result.get("success"):
             error_msg = publish_result.get("message") or publish_result.get("error") or "发布失败"
             logger.error(f"[publish_to_xhs] 发布失败: {error_msg}")
-            return {
+            failure_result = {
                 "success": False,
                 "error": error_msg,
                 "job_id": job_id,
@@ -313,6 +320,10 @@ async def publish_to_xhs(
                 "failed_images": failed_images,
                 "publish_mode": publish_mode,
             }
+            for extra_key in ("login_required", "login_qrcode", "qr_image_url", "qr_image_route", "qr_image_path", "expires_at"):
+                if extra_key in publish_result:
+                    failure_result[extra_key] = publish_result.get(extra_key)
+            return failure_result
         
         # 获取笔记链接
         note_url = None
@@ -357,5 +368,6 @@ async def publish_to_xhs(
 # ============================================================
 
 __all__ = [
+    "get_xhs_login_qrcode",
     "publish_to_xhs",
 ]

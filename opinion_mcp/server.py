@@ -1,5 +1,5 @@
 """
-Opinion MCP Server - AI 话题分析 MCP 服务器主入口
+AIInSight MCP Server - AI 话题分析 MCP 服务器主入口
 
 基于 FastAPI 实现的 MCP 兼容服务器，
 暴露 AI 话题分析工具供 AI 助手调用。
@@ -45,6 +45,7 @@ from opinion_mcp.tools import (
     get_analysis_result,
     update_copywriting,
     generate_topic_cards,
+    get_xhs_login_qrcode,
     publish_to_xhs,
     get_settings,
     register_webhook,
@@ -123,9 +124,9 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     global _server_started_at
     _server_started_at = datetime.now()
-    logger.info("Opinion MCP Server 启动中...")
+    logger.info("AIInSight MCP Server 启动中...")
     yield
-    logger.info("Opinion MCP Server 关闭中...")
+    logger.info("AIInSight MCP Server 关闭中...")
 
 
 app = FastAPI(
@@ -235,6 +236,15 @@ MCP_TOOLS: List[MCPTool] = [
                 }
             },
             required=["job_id"]
+        )
+    ),
+    MCPTool(
+        name="get_xhs_login_qrcode",
+        description="获取小红书登录二维码。返回二维码图片地址、相对路由和本地文件路径，供用户扫码登录。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={},
+            required=[]
         )
     ),
     MCPTool(
@@ -468,6 +478,7 @@ TOOL_HANDLERS = {
     "get_analysis_status": get_analysis_status,
     "get_analysis_result": get_analysis_result,
     "update_copywriting": update_copywriting,
+    "get_xhs_login_qrcode": get_xhs_login_qrcode,
     "publish_to_xhs": publish_to_xhs,
     "get_settings": get_settings,
     "register_webhook": register_webhook,
@@ -840,7 +851,7 @@ async def health_check() -> Dict[str, Any]:
     
     return {
         "status": "healthy",
-        "service": "Opinion MCP Server",
+        "service": "AIInSight MCP Server",
         "version": "1.0.0",
         "started_at": _server_started_at.isoformat() if _server_started_at else None,
         "uptime_seconds": round(uptime_seconds, 2) if uptime_seconds else None,
@@ -880,6 +891,13 @@ class PublishXhsRequest(BaseModel):
     job_id: str
     title: Optional[str] = None
     tags: Optional[List[str]] = None
+
+
+@app.post("/get_xhs_login_qrcode")
+@app.get("/get_xhs_login_qrcode")
+async def direct_get_xhs_login_qrcode() -> Dict[str, Any]:
+    """直接获取小红书登录二维码"""
+    return await get_xhs_login_qrcode()
 
 
 class WebhookRequest(BaseModel):
@@ -1112,7 +1130,7 @@ def parse_args() -> argparse.Namespace:
         解析后的参数命名空间
     """
     parser = argparse.ArgumentParser(
-        description="Opinion MCP Server - GlobalInSight 舆论分析 MCP 服务",
+        description="AIInSight MCP Server - AI 话题分析 MCP 服务",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -1185,7 +1203,7 @@ def log_startup_info(host: str, port: int) -> None:
     tools = [tool.name for tool in MCP_TOOLS]
     
     logger.info("=" * 60)
-    logger.info("Opinion MCP Server 启动")
+    logger.info("AIInSight MCP Server 启动")
     logger.info("=" * 60)
     logger.info(f"  服务地址: http://{host}:{port}")
     logger.info(f"  健康检查: http://{host}:{port}/health")

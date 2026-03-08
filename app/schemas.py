@@ -132,6 +132,11 @@ class XhsPublishResponse(BaseModel):
     """小红书发布响应"""
     success: bool
     message: str
+    login_required: bool = False
+    qr_image_url: Optional[str] = None
+    qr_image_route: Optional[str] = None
+    qr_image_path: Optional[str] = None
+    expires_at: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
 
 
@@ -140,6 +145,16 @@ class XhsStatusResponse(BaseModel):
     mcp_available: bool
     login_status: bool
     message: str
+
+
+class XhsLoginQrcodeResponse(BaseModel):
+    """小红书登录二维码响应"""
+    success: bool
+    message: str
+    qr_image_url: Optional[str] = None
+    qr_image_route: Optional[str] = None
+    qr_image_path: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 # ============================================================

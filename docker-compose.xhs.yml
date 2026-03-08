@@ -1,0 +1,31 @@
+services:
+  xhs-mcp:
+    image: ${XHS_MCP_IMAGE:-xpzouying/xiaohongshu-mcp}
+    platform: ${XHS_MCP_PLATFORM:-linux/amd64}
+    container_name: aiinsight-xhs-mcp
+    restart: unless-stopped
+    init: true
+    tty: true
+    environment:
+      ROD_BROWSER_BIN: /usr/bin/google-chrome
+      COOKIES_PATH: /app/data/cookies.json
+      XHS_PROXY: ${XHS_PROXY:-}
+    volumes:
+      - ./runtime/xhs/data:/app/data
+      - ./runtime/xhs/images:/app/images
+    ports:
+      - "${XHS_MCP_PORT:-18060}:18060"
+
+  api:
+    environment:
+      - XHS_MCP_URL=http://xhs-mcp:18060/mcp
+    depends_on:
+      - renderer
+      - xhs-mcp
+
+  mcp:
+    environment:
+      - XHS_MCP_URL=http://xhs-mcp:18060/mcp
+    depends_on:
+      - api
+      - xhs-mcp

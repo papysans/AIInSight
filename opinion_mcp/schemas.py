@@ -1,5 +1,5 @@
 """
-Opinion MCP Server Pydantic 模型定义
+AIInSight MCP Server Pydantic 模型定义
 
 包含所有数据结构的类型定义，用于数据验证和序列化。
 """

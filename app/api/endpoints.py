@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+import os
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.schemas import (
@@ -7,7 +8,7 @@ from app.schemas import (
     UserSettingsResponse, UserSettingsUpdateRequest,
     OutputFileListResponse, OutputFileInfo, OutputFileContentResponse,
     WorkflowStatusResponse, LLMProviderConfig,
-    XhsPublishRequest,
+    XhsPublishRequest, XhsLoginQrcodeResponse,
     TitleCardRenderRequest, RadarCardRenderRequest,
     TimelineCardRenderRequest, TrendCardRenderRequest, ImpactCardRenderRequest,
     DailyRankCardRenderRequest, HotTopicCardRenderRequest, CardRenderResponse,
@@ -31,6 +32,35 @@ import asyncio
 import copy
 
 router = APIRouter()
+
+
+def _get_public_api_base_url() -> str:
+    return os.getenv("PUBLIC_API_BASE_URL", "").rstrip("/")
+
+
+def _build_xhs_qrcode_urls(request: Request, filename: str) -> tuple[str, str]:
+    route = request.url_for("get_xhs_login_qrcode_file", filename=filename).path
+    public_base = _get_public_api_base_url()
+    if public_base:
+        return route, f"{public_base}{route}"
+    return route, route
+
+
+def _enrich_xhs_publish_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(result)
+    qr_filename = enriched.get("qr_filename")
+    if qr_filename:
+        qr_route, qr_url = _build_xhs_qrcode_urls(request, qr_filename)
+        enriched["qr_image_route"] = qr_route
+        enriched["qr_image_url"] = qr_url
+
+        login_qrcode = enriched.get("login_qrcode")
+        if isinstance(login_qrcode, dict):
+            login_qrcode = dict(login_qrcode)
+            login_qrcode["qr_image_route"] = qr_route
+            login_qrcode["qr_image_url"] = qr_url
+            enriched["login_qrcode"] = login_qrcode
+    return enriched
 
 
 @router.get("/health")
@@ -390,8 +420,44 @@ async def get_xhs_status():
     )
 
 
+@router.get("/xhs/login-qrcode", response_model=XhsLoginQrcodeResponse)
+async def get_xhs_login_qrcode(request: Request):
+    """生成并返回小红书登录二维码信息。"""
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    result = await xiaohongshu_publisher.get_login_qrcode()
+    if not result.get("success"):
+        return XhsLoginQrcodeResponse(
+            success=False,
+            message=result.get("message", "获取登录二维码失败"),
+        )
+
+    qr_filename = result.get("qr_filename", "")
+    qr_route, qr_url = _build_xhs_qrcode_urls(request, qr_filename)
+    return XhsLoginQrcodeResponse(
+        success=True,
+        message=result.get("message", "请使用小红书 App 扫码登录"),
+        qr_image_url=qr_url,
+        qr_image_route=qr_route,
+        qr_image_path=result.get("qr_image_path"),
+        expires_at=result.get("expires_at"),
+    )
+
+
+@router.get("/xhs/login-qrcode/file/{filename}", name="get_xhs_login_qrcode_file")
+async def get_xhs_login_qrcode_file(filename: str):
+    """返回登录二维码图片文件。"""
+    output_dir = Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login")).resolve()
+    file_path = (output_dir / filename).resolve()
+
+    if output_dir != file_path.parent or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="二维码文件不存在")
+
+    return FileResponse(file_path, media_type="image/png", filename=filename)
+
+
 @router.post("/xhs/publish")
-async def publish_to_xhs(request: XhsPublishRequest):
+async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
     """手动发布内容到小红书
     
     请求体：
@@ -420,10 +486,16 @@ async def publish_to_xhs(request: XhsPublishRequest):
         images=request.images,
         tags=request.tags
     )
+    result = _enrich_xhs_publish_result(http_request, result)
     
     return XhsPublishResponse(
         success=result.get("success", False),
         message=result.get("message") or result.get("error", "发布失败"),
+        login_required=result.get("login_required", False),
+        qr_image_url=result.get("qr_image_url"),
+        qr_image_route=result.get("qr_image_route"),
+        qr_image_path=result.get("qr_image_path"),
+        expires_at=result.get("expires_at"),
         data=result.get("data")
     )
 
@@ -665,7 +737,7 @@ async def ai_daily_ranking_cards(request: AiDailyRankingCardsRequest = None):
 
 
 @router.post("/ai-daily/ranking/publish")
-async def ai_daily_ranking_publish(request: AiDailyRankingPublishRequest = None):
+async def ai_daily_ranking_publish(http_request: Request, request: AiDailyRankingPublishRequest = None):
     """将今日 AI 热点整榜发布到小红书"""
     from app.services.publish.ai_daily_publish_service import publish_ai_daily_ranking
     req = request or AiDailyRankingPublishRequest()
@@ -676,8 +748,7 @@ async def ai_daily_ranking_publish(request: AiDailyRankingPublishRequest = None)
         tags=req.tags,
         card_types=req.card_types,
     )
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Publish failed"))
+    result = _enrich_xhs_publish_result(http_request, result)
     return result
 
 
@@ -710,7 +781,7 @@ async def ai_daily_topic_cards(topic_id: str, request: AiDailyCardsRequest = Non
 
 
 @router.post("/ai-daily/{topic_id}/publish")
-async def ai_daily_publish(topic_id: str, request: AiDailyPublishRequest = None):
+async def ai_daily_publish(topic_id: str, http_request: Request, request: AiDailyPublishRequest = None):
     """将 AI 日报话题发布到小红书"""
     from app.services.publish.ai_daily_publish_service import publish_ai_daily_topic
     req = request or AiDailyPublishRequest()
@@ -721,6 +792,5 @@ async def ai_daily_publish(topic_id: str, request: AiDailyPublishRequest = None)
         tags=req.tags,
         card_types=req.card_types,
     )
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Publish failed"))
+    result = _enrich_xhs_publish_result(http_request, result)
     return result

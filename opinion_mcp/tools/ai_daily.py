@@ -238,9 +238,16 @@ async def publish_ai_daily(
             data = resp.json()
 
         return {
-            "success": True,
+            "success": data.get("success", True),
             "topic_id": topic_id,
+            "message": data.get("message") or data.get("error"),
             "result": data,
+            "login_required": data.get("login_required", False),
+            "login_qrcode": data.get("login_qrcode"),
+            "qr_image_url": data.get("qr_image_url"),
+            "qr_image_route": data.get("qr_image_route"),
+            "qr_image_path": data.get("qr_image_path"),
+            "expires_at": data.get("expires_at"),
         }
 
     except Exception as e:
@@ -321,11 +328,18 @@ async def publish_ai_daily_ranking(
             data = resp.json()
 
         return {
-            "success": True,
+            "success": data.get("success", True),
             "date": data.get("date", ""),
             "limit": data.get("limit", limit),
             "title": data.get("title", ""),
+            "message": data.get("message") or data.get("error"),
             "result": data,
+            "login_required": data.get("login_required", False),
+            "login_qrcode": data.get("login_qrcode"),
+            "qr_image_url": data.get("qr_image_url"),
+            "qr_image_route": data.get("qr_image_route"),
+            "qr_image_path": data.get("qr_image_path"),
+            "expires_at": data.get("expires_at"),
         }
 
     except Exception as e:

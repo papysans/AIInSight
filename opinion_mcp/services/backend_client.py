@@ -5,6 +5,7 @@
 - /api/analyze (SSE 流式)
 - /api/workflow/status
 - /api/xhs/publish
+- /api/xhs/login-qrcode
 """
 
 import json
@@ -243,6 +244,38 @@ class BackendClient:
                 "success": False,
                 "message": str(e),
                 "data": None
+            }
+
+    async def get_xhs_login_qrcode(self) -> Dict[str, Any]:
+        """获取小红书登录二维码信息。"""
+        url = f"{self.base_url}/api/xhs/login-qrcode"
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.get(url)
+                data = response.json()
+
+                if response.status_code != 200:
+                    logger.error(f"[BackendClient] 获取小红书登录二维码失败: {response.status_code} - {data}")
+                    return {
+                        "success": False,
+                        "message": data.get("message") or f"API 返回 {response.status_code}",
+                    }
+
+                logger.info("[BackendClient] 获取小红书登录二维码成功")
+                return data
+
+        except httpx.ConnectError as e:
+            logger.error(f"[BackendClient] 连接后端失败: {e}")
+            return {
+                "success": False,
+                "message": f"无法连接后端服务: {self.base_url}",
+            }
+        except Exception as e:
+            logger.exception(f"[BackendClient] 获取小红书登录二维码异常: {e}")
+            return {
+                "success": False,
+                "message": str(e),
             }
     
     # ============================================================

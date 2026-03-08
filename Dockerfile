@@ -1,10 +1,20 @@
-FROM globalinsight-api:latest
+FROM python:3.11-slim
 
 WORKDIR /app
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+COPY requirements.txt ./requirements.txt
+
+RUN pip install --upgrade pip \
+    && pip install -r requirements.txt
+
 COPY app/ ./app/
 COPY opinion_mcp/ ./opinion_mcp/
-COPY requirements.txt ./requirements.txt
+
+RUN mkdir -p /app/cache /app/outputs
 
 EXPOSE 8000
 
