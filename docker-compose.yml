@@ -1,0 +1,46 @@
+services:
+  # FastAPI backend (Python)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - RENDERER_SERVICE_URL=http://renderer:3001
+      - XHS_MCP_URL=http://host.docker.internal:18060/mcp
+    volumes:
+      - ./cache:/app/cache
+      - ./outputs:/app/outputs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - renderer
+
+  # Playwright card renderer (Express + headless Chromium)
+  renderer:
+    build:
+      context: .
+      dockerfile: renderer/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+
+  # Opinion MCP server exposed to Claude / Claude Code
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "opinion_mcp.server", "--host", "0.0.0.0", "--port", "18061"]
+    ports:
+      - "18061:18061"
+    env_file: .env
+    environment:
+      - OPINION_BACKEND_URL=http://api:8000
+      - XHS_MCP_URL=http://host.docker.internal:18060/mcp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - api

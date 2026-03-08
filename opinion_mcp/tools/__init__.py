@@ -1,0 +1,66 @@
+"""
+MCP Tools - AI 话题分析工具集
+
+包含以下工具:
+- analyze_topic: 启动 AI 话题分析任务
+- get_analysis_status: 查询分析进度
+- get_analysis_result: 获取分析结果
+- update_copywriting: 修改文案
+- publish_to_xhs: 发布到小红书
+- get_settings: 获取配置
+- register_webhook: 注册进度推送
+- get_ai_daily: 获取 AI 日报
+- analyze_ai_topic: 深度分析 AI 话题
+- generate_ai_daily_cards: 生成 AI 日报卡片
+"""
+
+# 分析相关工具
+from opinion_mcp.tools.analyze import (
+    analyze_topic,
+    get_analysis_status,
+    get_analysis_result,
+    update_copywriting,
+    generate_topic_cards,
+)
+
+# 发布工具
+from opinion_mcp.tools.publish import (
+    publish_to_xhs,
+)
+
+# 设置和 Webhook 工具
+from opinion_mcp.tools.settings import (
+    get_settings,
+    register_webhook,
+)
+
+# AI 日报工具
+from opinion_mcp.tools.ai_daily import (
+    get_ai_daily,
+    analyze_ai_topic,
+    generate_ai_daily_cards,
+    publish_ai_daily,
+    generate_ai_daily_ranking_cards,
+    publish_ai_daily_ranking,
+)
+
+__all__ = [
+    # 分析相关
+    "analyze_topic",
+    "get_analysis_status",
+    "get_analysis_result",
+    "update_copywriting",
+    "generate_topic_cards",
+    # 发布
+    "publish_to_xhs",
+    # 设置和 Webhook
+    "get_settings",
+    "register_webhook",
+    # AI 日报
+    "get_ai_daily",
+    "analyze_ai_topic",
+    "generate_ai_daily_cards",
+    "publish_ai_daily",
+    "generate_ai_daily_ranking_cards",
+    "publish_ai_daily_ranking",
+]
