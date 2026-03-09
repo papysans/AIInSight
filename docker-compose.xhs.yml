@@ -19,6 +19,8 @@ services:
   api:
     environment:
       - XHS_MCP_URL=http://xhs-mcp:18060/mcp
+      - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:8000}
+      - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-30}
     depends_on:
       - renderer
       - xhs-mcp

@@ -10,6 +10,8 @@ services:
     environment:
       - RENDERER_SERVICE_URL=http://renderer:3001
       - XHS_MCP_URL=http://host.docker.internal:18060/mcp
+      - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:8000}
+      - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-30}
     volumes:
       - ./cache:/app/cache
       - ./outputs:/app/outputs

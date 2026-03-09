@@ -8,10 +8,11 @@ MCP 服务地址：https://github.com/xpzouying/xiaohongshu-mcp
 import asyncio
 import base64
 import httpx
+import json
 import os
 import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from loguru import logger
@@ -61,6 +62,7 @@ class XiaohongshuPublisher:
         # such as the Docker sidecar URL are honored by the shared singleton.
         self.mcp_url = mcp_url or os.getenv("XHS_MCP_URL", "http://localhost:18060/mcp")
         self._request_id = 0
+        self._login_qrcode_lock = asyncio.Lock()
 
     def _next_request_id(self) -> int:
         """生成下一个请求 ID"""
@@ -71,7 +73,84 @@ class XiaohongshuPublisher:
         """返回登录二维码输出目录，并确保目录存在。"""
         output_dir = Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login"))
         output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+        return output_dir.resolve()
+
+    def _get_login_qrcode_meta_path(self) -> Path:
+        return self._get_login_qrcode_dir() / "latest.json"
+
+    @staticmethod
+    def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _get_login_qrcode_timeout(self) -> float:
+        raw = os.getenv("XHS_LOGIN_QRCODE_TIMEOUT_SECONDS", "30").strip()
+        try:
+            timeout = float(raw)
+        except ValueError:
+            timeout = 30.0
+        return max(5.0, timeout)
+
+    def _load_cached_login_qrcode(self) -> Optional[Dict[str, Any]]:
+        output_dir = self._get_login_qrcode_dir()
+        meta_path = self._get_login_qrcode_meta_path()
+        meta: Dict[str, Any] = {}
+
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.debug(f"[XHS MCP] Failed to parse QR metadata: {exc}")
+
+        qr_filename = str(meta.get("qr_filename") or "").strip()
+        qr_file: Optional[Path] = None
+
+        if qr_filename:
+            candidate = (output_dir / qr_filename).resolve()
+            if candidate.parent == output_dir and candidate.is_file():
+                qr_file = candidate
+
+        if qr_file is None:
+            candidates = sorted(output_dir.glob("xhs-login-qrcode-*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if candidates:
+                candidate = candidates[0].resolve()
+                if candidate.parent == output_dir and candidate.is_file():
+                    qr_file = candidate
+                    if not qr_filename:
+                        qr_filename = candidate.name
+
+        if qr_file is None:
+            return None
+
+        expires_at = self._parse_iso_datetime(meta.get("expires_at"))
+        if expires_at is None:
+            approx_expiry = datetime.fromtimestamp(qr_file.stat().st_mtime) + timedelta(minutes=5)
+            expires_at = approx_expiry
+
+        if expires_at <= datetime.now():
+            return None
+
+        return {
+            "success": True,
+            "message": meta.get("message") or "请使用小红书 App 扫码登录",
+            "qr_filename": qr_filename or qr_file.name,
+            "qr_image_path": str(qr_file),
+            "expires_at": expires_at.isoformat(),
+        }
+
+    def _save_login_qrcode_meta(self, payload: Dict[str, Any]) -> None:
+        meta_path = self._get_login_qrcode_meta_path()
+        meta = {
+            "message": payload.get("message", ""),
+            "qr_filename": payload.get("qr_filename"),
+            "expires_at": payload.get("expires_at"),
+            "created_at": datetime.now().isoformat(),
+        }
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
     @staticmethod
     def _extract_text_and_png(content: Any) -> tuple[str, Optional[str]]:
@@ -287,34 +366,47 @@ class XiaohongshuPublisher:
         Returns:
             包含二维码文件路径、文件名、提示文案和过期时间的字典
         """
-        result = await self._call_mcp("get_login_qrcode", timeout=90.0)
+        cached = self._load_cached_login_qrcode()
+        if cached:
+            logger.info("[XHS MCP] Reusing cached login QR code")
+            return cached
 
-        if not result.get("success"):
-            return {
-                "success": False,
-                "message": result.get("error", "获取登录二维码失败"),
+        async with self._login_qrcode_lock:
+            cached = self._load_cached_login_qrcode()
+            if cached:
+                logger.info("[XHS MCP] Reusing cached login QR code after lock")
+                return cached
+
+            result = await self._call_mcp("get_login_qrcode", timeout=self._get_login_qrcode_timeout())
+
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "message": result.get("error", "获取登录二维码失败"),
+                }
+
+            mcp_result = result.get("result", {})
+            message, image_b64 = self._extract_text_and_png(mcp_result.get("content"))
+            if not image_b64:
+                return {
+                    "success": False,
+                    "message": message or "未从 MCP 返回结果中提取到二维码图片",
+                }
+
+            output_dir = self._get_login_qrcode_dir()
+            filename = f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+            output_path = output_dir / filename
+            output_path.write_bytes(base64.b64decode(image_b64))
+
+            payload = {
+                "success": True,
+                "message": message or "请使用小红书 App 扫码登录",
+                "qr_filename": filename,
+                "qr_image_path": str(output_path.resolve()),
+                "expires_at": self._extract_expiry(message),
             }
-
-        mcp_result = result.get("result", {})
-        message, image_b64 = self._extract_text_and_png(mcp_result.get("content"))
-        if not image_b64:
-            return {
-                "success": False,
-                "message": message or "未从 MCP 返回结果中提取到二维码图片",
-            }
-
-        output_dir = self._get_login_qrcode_dir()
-        filename = f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
-        output_path = output_dir / filename
-        output_path.write_bytes(base64.b64decode(image_b64))
-
-        return {
-            "success": True,
-            "message": message or "请使用小红书 App 扫码登录",
-            "qr_filename": filename,
-            "qr_image_path": str(output_path.resolve()),
-            "expires_at": self._extract_expiry(message),
-        }
+            self._save_login_qrcode_meta(payload)
+            return payload
 
     async def publish_content(
         self,

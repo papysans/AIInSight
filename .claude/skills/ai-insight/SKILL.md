@@ -20,7 +20,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 | **M0** | **优先使用缓存** | 调用 `get_ai_daily` 时默认不传 `force_refresh`，除非用户明确要求刷新 |
 | **M1** | **展示榜单摘要** | 获取日报后，以排序列表形式展示 Top 话题，包含标题、来源数、标签 |
 | **M2** | **深度分析前确认** | 用户选择话题做深度分析时，确认分析深度（quick/standard/deep） |
-| **M3** | **卡片生成后展示** | 调用卡片生成后，告知用户已生成哪些类型的卡片，并展示每张预览图的 `output_path` |
+| **M3** | **卡片生成后展示** | 调用卡片生成后，告知用户已生成哪些类型的卡片，并优先展示每张预览图的 `image_url`；若没有再回退到 `output_path` |
 | **M4** | **发布前必须确认** | 发布到小红书前必须获得用户明确确认 |
 | **M5** | **发布时优先复用现有卡片** | 如果用户已经生成过卡片，发布时沿用同一话题和卡片类型，避免重复生成 |
 | **M6** | **未登录时给二维码地址** | 若发布链路提示未登录，必须调用 `get_xhs_login_qrcode`，把 `qr_image_url` 或 `qr_image_route` 告诉用户 |
@@ -80,7 +80,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 用户确认后：
 1. 调用 `analyze_ai_topic(topic_id, depth)`
 2. 展示分析结果（观点摘要、多角度解读、趋势判断）
-3. 如生成了卡片预览，同时展示卡片文件路径
+3. 如生成了卡片预览，优先展示卡片访问地址 `image_url`；若没有再展示本地文件路径
 4. 询问是否生成卡片或发布
 
 ### 3. `/publish <topic_or_id>` — 发布到小红书
@@ -102,7 +102,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 
 确认后：
 1. 如尚未生成卡片，调用 `generate_ai_daily_cards(topic_id, card_types)`
-2. 若返回了 `output_path`，必须把路径展示给用户，便于本地打开预览
+2. 若返回了 `image_url`，优先把完整地址展示给用户；若没有再回退到 `output_path`
 3. 调用 `publish_ai_daily(topic_id, card_types)`
 4. 如果返回未登录或带有二维码字段，必须把二维码地址返回给用户，并等待扫码后再继续
 5. 发布成功时返回结果与笔记链接
@@ -112,7 +112,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 当用户要求“把今天的榜单做成小红书图文”或“把今日榜单发布到小红书”时：
 1. 先确认是“先生成预览”还是“直接发布”
 2. 生成预览时调用 `generate_ai_daily_ranking_cards(limit, card_types)`
-3. 若返回了 `output_path`，必须把每张榜单卡片的路径展示给用户
+3. 若返回了 `image_url`，必须优先把每张榜单卡片的完整访问地址展示给用户；若没有再回退到 `output_path`
 4. 发布时调用 `publish_ai_daily_ranking(limit, card_types)`
 5. 默认卡片使用 `["title", "daily-rank"]`
 6. 发布前必须再次确认

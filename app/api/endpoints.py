@@ -38,12 +38,79 @@ def _get_public_api_base_url() -> str:
     return os.getenv("PUBLIC_API_BASE_URL", "").rstrip("/")
 
 
-def _build_xhs_qrcode_urls(request: Request, filename: str) -> tuple[str, str]:
-    route = request.url_for("get_xhs_login_qrcode_file", filename=filename).path
-    public_base = _get_public_api_base_url()
+def _build_public_file_urls(
+    request: Request,
+    route_name: str,
+    filename: str,
+    public_base: str = "",
+) -> tuple[str, str]:
+    file_url = request.url_for(route_name, filename=filename)
+    route = file_url.path
     if public_base:
         return route, f"{public_base}{route}"
-    return route, route
+    return route, str(file_url)
+
+
+def _get_xhs_qrcode_public_base_url() -> str:
+    return (
+        os.getenv("XHS_LOGIN_QRCODE_PUBLIC_BASE_URL", "").rstrip("/")
+        or _get_public_api_base_url()
+    )
+
+
+def _build_xhs_qrcode_urls(request: Request, filename: str) -> tuple[str, str]:
+    return _build_public_file_urls(
+        request=request,
+        route_name="get_xhs_login_qrcode_file",
+        filename=filename,
+        public_base=_get_xhs_qrcode_public_base_url(),
+    )
+
+
+def _get_card_preview_public_base_url() -> str:
+    return (
+        os.getenv("CARD_PREVIEW_PUBLIC_BASE_URL", "").rstrip("/")
+        or _get_public_api_base_url()
+    )
+
+
+def _get_card_preview_output_dir() -> Path:
+    return Path(settings.AI_DAILY_CONFIG["preview_output_dir"]).resolve()
+
+
+def _build_card_preview_urls(request: Request, filename: str) -> tuple[str, str]:
+    return _build_public_file_urls(
+        request=request,
+        route_name="get_card_preview_file",
+        filename=filename,
+        public_base=_get_card_preview_public_base_url(),
+    )
+
+
+def _enrich_card_render_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
+    enriched = dict(result)
+    output_path = enriched.get("output_path")
+    if not output_path:
+        return enriched
+
+    filename = Path(output_path).name
+    _, image_url = _build_card_preview_urls(request, filename)
+    enriched["image_url"] = image_url
+    return enriched
+
+
+def _enrich_card_collection(request: Request, cards: Dict[str, Any]) -> Dict[str, Any]:
+    enriched: Dict[str, Any] = {}
+    for key, card in (cards or {}).items():
+        if hasattr(card, "model_dump"):
+            card_payload = card.model_dump()
+        elif isinstance(card, dict):
+            card_payload = card
+        else:
+            enriched[key] = card
+            continue
+        enriched[key] = _enrich_card_render_result(request, card_payload)
+    return enriched
 
 
 def _enrich_xhs_publish_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -506,8 +573,20 @@ async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
 from app.services.card_render_client import card_render_client
 
 
+@router.get("/card-previews/{filename}", name="get_card_preview_file")
+async def get_card_preview_file(filename: str):
+    """返回卡片预览图片文件。"""
+    output_dir = _get_card_preview_output_dir()
+    file_path = (output_dir / filename).resolve()
+
+    if output_dir != file_path.parent or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="卡片预览文件不存在")
+
+    return FileResponse(file_path, media_type="image/png", filename=filename)
+
+
 @router.post("/cards/title", response_model=CardRenderResponse)
-async def render_title_card(request: TitleCardRenderRequest):
+async def render_title_card(request: TitleCardRenderRequest, http_request: Request):
     """渲染标题卡"""
     result = await card_render_client.render_title(
         title=request.title,
@@ -515,11 +594,12 @@ async def render_title_card(request: TitleCardRenderRequest):
         theme=request.theme,
         emoji_position=request.emoji_position,
     )
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/impact", response_model=CardRenderResponse)
-async def render_impact_card(request: ImpactCardRenderRequest):
+async def render_impact_card(request: ImpactCardRenderRequest, http_request: Request):
     """渲染影响判断卡"""
     result = await card_render_client.render_impact(
         title=request.title,
@@ -530,50 +610,55 @@ async def render_impact_card(request: ImpactCardRenderRequest):
         confidence=request.confidence,
         tags=request.tags,
     )
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/radar", response_model=CardRenderResponse)
-async def render_radar_card(request: RadarCardRenderRequest):
+async def render_radar_card(request: RadarCardRenderRequest, http_request: Request):
     """渲染雷达图卡"""
     result = await card_render_client.render_radar(
         labels=request.labels,
         datasets=[d if isinstance(d, dict) else d.model_dump() for d in request.datasets],
     )
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/timeline", response_model=CardRenderResponse)
-async def render_timeline_card(request: TimelineCardRenderRequest):
+async def render_timeline_card(request: TimelineCardRenderRequest, http_request: Request):
     """渲染辩论时间线卡"""
     result = await card_render_client.render_timeline(timeline=request.timeline)
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/trend", response_model=CardRenderResponse)
-async def render_trend_card(request: TrendCardRenderRequest):
+async def render_trend_card(request: TrendCardRenderRequest, http_request: Request):
     """渲染趋势图卡"""
     result = await card_render_client.render_trend(
         stage=request.stage,
         growth=request.growth,
         curve=request.curve,
     )
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/daily-rank", response_model=CardRenderResponse)
-async def render_daily_rank_card(request: DailyRankCardRenderRequest):
+async def render_daily_rank_card(request: DailyRankCardRenderRequest, http_request: Request):
     """渲染每日榜单卡"""
     result = await card_render_client.render_daily_rank(
         date=request.date,
         topics=[t if isinstance(t, dict) else t.model_dump() for t in request.topics],
         title=request.title,
     )
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/hot-topic", response_model=CardRenderResponse)
-async def render_hot_topic_card(request: HotTopicCardRenderRequest):
+async def render_hot_topic_card(request: HotTopicCardRenderRequest, http_request: Request):
     """渲染热点详情卡"""
     result = await card_render_client.render_hot_topic(
         title=request.title,
@@ -584,6 +669,7 @@ async def render_hot_topic_card(request: HotTopicCardRenderRequest):
         date=request.date,
         sources=request.sources,
     )
+    result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
@@ -592,7 +678,7 @@ async def render_hot_topic_card(request: HotTopicCardRenderRequest):
 # ============================================================
 
 @router.post("/topic/cards")
-async def generate_topic_cards(request: TopicCardsRequest):
+async def generate_topic_cards(request: TopicCardsRequest, http_request: Request):
     """为话题分析结果生成可视化卡片"""
     cards = {}
     radar_payload = build_topic_radar_payload(
@@ -618,19 +704,19 @@ async def generate_topic_cards(request: TopicCardsRequest):
     for ct in request.card_types:
         if ct == "title":
             result = await card_render_client.render_title(title=request.title)
-            cards["title"] = CardRenderResponse(**result)
+            cards["title"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
         elif ct == "impact":
             result = await card_render_client.render_impact(**impact_payload)
-            cards["impact"] = CardRenderResponse(**result)
+            cards["impact"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
         elif ct == "radar":
             result = await card_render_client.render_radar(
                 labels=radar_payload["labels"],
                 datasets=radar_payload["datasets"],
             )
-            cards["radar"] = CardRenderResponse(**result)
+            cards["radar"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
         elif ct == "timeline":
             result = await card_render_client.render_timeline(timeline=timeline_payload)
-            cards["timeline"] = CardRenderResponse(**result)
+            cards["timeline"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
         elif ct == "hot-topic":
             result = await card_render_client.render_hot_topic(
                 title=request.title,
@@ -640,7 +726,7 @@ async def generate_topic_cards(request: TopicCardsRequest):
                 score=request.score,
                 sources=request.sources[:4],
             )
-            cards["hot-topic"] = CardRenderResponse(**result)
+            cards["hot-topic"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
     return {"cards": cards}
 
 
@@ -722,7 +808,7 @@ def _topic_to_hot_topic_payload(topic) -> dict:
 
 
 @router.post("/ai-daily/ranking/cards")
-async def ai_daily_ranking_cards(request: AiDailyRankingCardsRequest = None):
+async def ai_daily_ranking_cards(http_request: Request, request: AiDailyRankingCardsRequest = None):
     """为今日 AI 热点整榜生成卡片套图"""
     from app.services.publish.ai_daily_publish_service import generate_ai_daily_ranking_cards
     req = request or AiDailyRankingCardsRequest()
@@ -733,6 +819,7 @@ async def ai_daily_ranking_cards(request: AiDailyRankingCardsRequest = None):
     )
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Card generation failed"))
+    result["cards"] = _enrich_card_collection(http_request, result.get("cards", {}))
     return result
 
 
@@ -753,7 +840,7 @@ async def ai_daily_ranking_publish(http_request: Request, request: AiDailyRankin
 
 
 @router.post("/ai-daily/{topic_id}/cards")
-async def ai_daily_topic_cards(topic_id: str, request: AiDailyCardsRequest = None):
+async def ai_daily_topic_cards(topic_id: str, http_request: Request, request: AiDailyCardsRequest = None):
     """为单个话题生成卡片套图"""
     topic = await get_topic_by_id(topic_id)
     if not topic:
@@ -765,17 +852,17 @@ async def ai_daily_topic_cards(topic_id: str, request: AiDailyCardsRequest = Non
     for ct in card_types:
         if ct == "title":
             result = await card_render_client.render_title(title=topic.title)
-            cards["title"] = CardRenderResponse(**result)
+            cards["title"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
         elif ct == "hot-topic":
             result = await card_render_client.render_hot_topic(**_topic_to_hot_topic_payload(topic))
-            cards["hot-topic"] = CardRenderResponse(**result)
+            cards["hot-topic"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
         elif ct == "daily-rank":
             from datetime import date as date_cls
             result = await card_render_client.render_daily_rank(
                 date=date_cls.today().isoformat(),
                 topics=[_topic_to_rank_item(topic, 1)],
             )
-            cards["daily-rank"] = CardRenderResponse(**result)
+            cards["daily-rank"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
 
     return {"topic_id": topic_id, "cards": cards}
 
