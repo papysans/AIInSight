@@ -12,6 +12,8 @@ services:
       - XHS_MCP_URL=http://host.docker.internal:18060/mcp
       - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:8000}
       - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-30}
+      - TZ=${TZ:-Asia/Shanghai}
+      - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
     volumes:
       - ./cache:/app/cache
       - ./outputs:/app/outputs
@@ -29,6 +31,7 @@ services:
       - "3001:3001"
     environment:
       - PORT=3001
+      - TZ=${TZ:-Asia/Shanghai}
 
   # Opinion MCP server exposed to Claude / Claude Code
   mcp:
@@ -42,6 +45,7 @@ services:
     environment:
       - OPINION_BACKEND_URL=http://api:8000
       - XHS_MCP_URL=http://host.docker.internal:18060/mcp
+      - TZ=${TZ:-Asia/Shanghai}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

@@ -7,9 +7,10 @@ services:
     init: true
     tty: true
     environment:
-      ROD_BROWSER_BIN: /usr/bin/google-chrome
+      ROD_BROWSER_BIN: ${XHS_MCP_BROWSER_BIN:-/usr/bin/google-chrome}
       COOKIES_PATH: /app/data/cookies.json
       XHS_PROXY: ${XHS_PROXY:-}
+      TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./runtime/xhs/data:/app/data
       - ./runtime/xhs/images:/app/images
@@ -21,6 +22,15 @@ services:
       - XHS_MCP_URL=http://xhs-mcp:18060/mcp
       - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:8000}
       - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-30}
+      - TZ=${TZ:-Asia/Shanghai}
+      - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
+      - XHS_COOKIES_PATH=runtime/xhs/data/cookies.json
+      # Shared image dir: API writes here, xhs-mcp reads as /app/images/
+      - XHS_IMAGE_API_DIR=/app/runtime/xhs/images
+      - XHS_IMAGE_MCP_DIR=/app/images
+    volumes:
+      - ./runtime/xhs/data:/app/runtime/xhs/data
+      - ./runtime/xhs/images:/app/runtime/xhs/images
     depends_on:
       - renderer
       - xhs-mcp
@@ -28,6 +38,7 @@ services:
   mcp:
     environment:
       - XHS_MCP_URL=http://xhs-mcp:18060/mcp
+      - TZ=${TZ:-Asia/Shanghai}
     depends_on:
       - api
       - xhs-mcp
