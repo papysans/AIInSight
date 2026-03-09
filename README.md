@@ -214,6 +214,21 @@ docker compose -f docker-compose.yml -f docker-compose.xhs.yml up -d
 - 也可以直接在本机运行 `./scripts/open-xhs-login-qrcode.sh` 拉起二维码
 - 默认显式指定 `linux/amd64`，在 Apple Silicon 上通常依赖 Docker Desktop 的架构兼容层
 
+Apple Silicon 额外说明：
+
+- 上游 `xpzouying/xiaohongshu-mcp:latest-arm64` 当前我实测会因为浏览器自动下载失败而直接返回 `500`
+- 如果你希望继续走 Docker sidecar，又不想依赖 `linux/amd64` 模拟层，可运行 `./scripts/build-xhs-mcp-image.sh`
+- 这个脚本会直接拉取上游源码，本地构建一个 `Debian + Chromium` 的 ARM64 修正版镜像
+- 构建完成后可这样切换：
+
+```bash
+XHS_MCP_IMAGE=aiinsight-xhs-mcp:arm64-patched \
+XHS_MCP_PLATFORM=linux/arm64 \
+XHS_MCP_BROWSER_BIN=/usr/bin/chromium \
+XHS_MCP_SOURCE_TIMEZONE=Asia/Shanghai \
+docker compose -f docker-compose.yml -f docker-compose.xhs.yml up -d --force-recreate xhs-mcp api mcp
+```
+
 ## 主要接口
 
 ### MCP 工具
