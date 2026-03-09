@@ -15,6 +15,7 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from zoneinfo import ZoneInfo
 from loguru import logger
 
 
@@ -22,7 +23,7 @@ def _process_image(image: str) -> str:
     """
     处理图片路径/URL/Base64 数据
     
-    - 如果是 Base64 data URL，保存为临时文件并返回路径
+    - 如果是 Base64 data URL，保存到两容器共享卷并返回 xhs-mcp 侧路径
     - 如果是普通 URL 或本地路径，直接返回
     """
     if image.startswith("data:image/"):
@@ -40,14 +41,28 @@ def _process_image(image: str) -> str:
             elif "image/webp" in header:
                 ext = "webp"
             
-            # Decode and save to temp file
+            # Decode and save to shared volume so xhs-mcp can read it
             image_data = base64.b64decode(data)
-            temp_dir = tempfile.gettempdir()
-            temp_path = os.path.join(temp_dir, f"xhs_upload_{id(image)}.{ext}")
-            with open(temp_path, "wb") as f:
-                f.write(image_data)
-            logger.info(f"[XHS] Converted Base64 image to temp file: {temp_path}")
-            return temp_path
+            filename = f"xhs_upload_{id(image_data)}_{int(os.times().elapsed * 1000) % 1000000}.{ext}"
+
+            api_dir = os.getenv("XHS_IMAGE_API_DIR", "").strip()
+            mcp_dir = os.getenv("XHS_IMAGE_MCP_DIR", "").strip()
+
+            if api_dir and mcp_dir:
+                os.makedirs(api_dir, exist_ok=True)
+                api_path = os.path.join(api_dir, filename)
+                mcp_path = os.path.join(mcp_dir, filename)
+                with open(api_path, "wb") as f:
+                    f.write(image_data)
+                logger.info(f"[XHS] Saved image to shared vol: {api_path} → mcp sees: {mcp_path}")
+                return mcp_path
+            else:
+                # Fallback: local /tmp (only works outside Docker)
+                temp_path = os.path.join(tempfile.gettempdir(), f"xhs_upload_{id(image)}.{ext}")
+                with open(temp_path, "wb") as f:
+                    f.write(image_data)
+                logger.warning(f"[XHS] XHS_IMAGE_API_DIR not set, saved to tmp (won't work cross-container): {temp_path}")
+                return temp_path
         except Exception as e:
             logger.error(f"[XHS] Failed to process Base64 image: {e}")
             return image  # Return original on error
@@ -79,11 +94,30 @@ class XiaohongshuPublisher:
         return self._get_login_qrcode_dir() / "latest.json"
 
     @staticmethod
+    def _get_app_timezone() -> ZoneInfo:
+        tz_name = os.getenv("TZ", "Asia/Shanghai").strip() or "Asia/Shanghai"
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            return ZoneInfo("Asia/Shanghai")
+
+    @staticmethod
+    def _get_mcp_source_timezone() -> ZoneInfo:
+        tz_name = os.getenv("XHS_MCP_SOURCE_TIMEZONE", "UTC").strip() or "UTC"
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            return ZoneInfo("UTC")
+
+    @staticmethod
     def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(value)
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=XiaohongshuPublisher._get_app_timezone())
+            return parsed
         except ValueError:
             return None
 
@@ -128,10 +162,13 @@ class XiaohongshuPublisher:
 
         expires_at = self._parse_iso_datetime(meta.get("expires_at"))
         if expires_at is None:
-            approx_expiry = datetime.fromtimestamp(qr_file.stat().st_mtime) + timedelta(minutes=5)
+            approx_expiry = datetime.fromtimestamp(
+                qr_file.stat().st_mtime,
+                tz=self._get_app_timezone(),
+            ) + timedelta(minutes=5)
             expires_at = approx_expiry
 
-        if expires_at <= datetime.now():
+        if expires_at <= datetime.now(tz=self._get_app_timezone()):
             return None
 
         return {
@@ -180,7 +217,9 @@ class XiaohongshuPublisher:
             return None
 
         try:
-            return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").isoformat()
+            dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+            source_dt = dt.replace(tzinfo=XiaohongshuPublisher._get_mcp_source_timezone())
+            return source_dt.astimezone(XiaohongshuPublisher._get_app_timezone()).isoformat()
         except ValueError:
             return None
 
@@ -387,7 +426,16 @@ class XiaohongshuPublisher:
 
             mcp_result = result.get("result", {})
             message, image_b64 = self._extract_text_and_png(mcp_result.get("content"))
+
+            # xhs-mcp returns text-only (no image) when already logged in
             if not image_b64:
+                already_logged_in = "已登录" in message or "登录状态" in message
+                if already_logged_in:
+                    return {
+                        "success": True,
+                        "already_logged_in": True,
+                        "message": message,
+                    }
                 return {
                     "success": False,
                     "message": message or "未从 MCP 返回结果中提取到二维码图片",
@@ -533,6 +581,191 @@ class XiaohongshuPublisher:
             "login_status": login_result.get("logged_in", False),
             "message": login_result.get("message", ""),
         }
+
+    # ============================================================
+    # Cookie 注入 (Phase 1)
+    # ============================================================
+
+    @staticmethod
+    def get_xhs_cookies_path() -> Path:
+        """获取 xhs-mcp sidecar 使用的 cookies.json 路径（volume 挂载点）。"""
+        return Path(os.getenv("XHS_COOKIES_PATH", "runtime/xhs/data/cookies.json")).resolve()
+
+    @staticmethod
+    def _parse_raw_cookie_header(raw_header: str) -> list[dict]:
+        """将浏览器原始 Cookie header 字符串转为 go-rod NetworkCookie 格式。
+
+        输入格式: "name1=val1; name2=val2; ..."
+        """
+        # 已知需要 httpOnly 的 cookie 名
+        HTTPONLY_NAMES = {"web_session", "galaxy_creator_session_id", "customer-sso-sid"}
+        cookies = []
+        for pair in raw_header.split(";"):
+            pair = pair.strip()
+            if not pair or "=" not in pair:
+                continue
+            name, value = pair.split("=", 1)
+            name = name.strip()
+            value = value.strip()
+            if not name:
+                continue
+            cookies.append({
+                "name": name,
+                "value": value,
+                "domain": ".xiaohongshu.com",
+                "path": "/",
+                "expires": -1,
+                "size": len(name) + len(value),
+                "httpOnly": name in HTTPONLY_NAMES,
+                "secure": True,
+                "session": True,
+                "sameSite": "",
+                "priority": "Medium",
+                "sameParty": False,
+                "sourceScheme": "Secure",
+                "sourcePort": 443,
+            })
+        return cookies
+
+    @staticmethod
+    def _is_raw_cookie_header(text: str) -> bool:
+        """判断文本是否是原始 Cookie header 格式（name=val; name=val）。"""
+        text = text.strip()
+        # 不是 JSON（不以 [ 或 { 开头）
+        if text.startswith("[") or text.startswith("{"):
+            return False
+        # 包含 name=value 对用分号分隔
+        return "=" in text and "web_session=" in text
+
+    async def verify_and_save_cookies(self, cookies_data: Any) -> Dict[str, Any]:
+        """
+        校验 cookies 并写入 xhs-mcp 的 volume 挂载路径，
+        然后调用 check_login_status 验证是否生效。
+
+        支持三种输入格式:
+        1. go-rod 格式 (list of dicts with name/value/domain)
+        2. 原始 Cookie header 字符串 ("name1=val1; name2=val2")
+        3. JSON 字符串
+
+        Returns:
+            {"success": bool, "message": str, "login_verified": bool}
+        """
+        # 1. 规范化为 go-rod JSON
+        if isinstance(cookies_data, str):
+            cookies_data = cookies_data.strip()
+            if self._is_raw_cookie_header(cookies_data):
+                logger.info("[XHS] Detected raw cookie header string, converting to go-rod format")
+                go_rod_cookies = self._parse_raw_cookie_header(cookies_data)
+                if not go_rod_cookies:
+                    return {"success": False, "message": "解析 cookie 字符串失败，未找到有效的 name=value 对", "login_verified": False}
+                raw = json.dumps(go_rod_cookies, ensure_ascii=False)
+            else:
+                raw = cookies_data
+        elif isinstance(cookies_data, list):
+            raw = json.dumps(cookies_data, ensure_ascii=False)
+        elif isinstance(cookies_data, dict):
+            raw = json.dumps(cookies_data, ensure_ascii=False)
+        else:
+            return {"success": False, "message": "不支持的 cookies 格式", "login_verified": False}
+
+        # 2. 基本校验：必须包含 web_session
+        if "web_session" not in raw:
+            return {
+                "success": False,
+                "message": "cookies 中未找到 web_session 字段，请确认 cookies 来源",
+                "login_verified": False,
+            }
+
+        # 3. 写盘
+        cookie_path = self.get_xhs_cookies_path()
+        cookie_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            cookie_path.write_text(raw, encoding="utf-8")
+            logger.info(f"[XHS] Cookies written to {cookie_path} ({len(raw)} bytes)")
+        except OSError as e:
+            return {"success": False, "message": f"写入 cookies 失败: {e}", "login_verified": False}
+
+        # 4. 验证（xhs-mcp 会在下次请求时重新加载 cookies）
+        login_verified = False
+        try:
+            status = await self.check_login_status()
+            login_verified = status.get("logged_in", False)
+        except Exception as exc:
+            logger.warning(f"[XHS] Cookie verification call failed (non-fatal): {exc}")
+
+        return {
+            "success": True,
+            "message": "Cookies 已写入" + ("，登录验证通过 ✅" if login_verified else "，但登录验证未通过（xhs-mcp 可能需要重启以加载新 cookies）"),
+            "login_verified": login_verified,
+        }
+
+    # ============================================================
+    # Playwright 登录代理 (Phase 2)
+    # ============================================================
+
+    @staticmethod
+    def _get_renderer_url() -> str:
+        return os.getenv("RENDERER_SERVICE_URL", "http://localhost:3001")
+
+    async def start_playwright_login(self) -> Dict[str, Any]:
+        """
+        通过 renderer 服务启动 Playwright 登录流程，获取小红书 QR 码。
+
+        Returns:
+            {"success": bool, "session_id": str, "qr_image_data": str, "message": str}
+        """
+        url = f"{self._get_renderer_url()}/login-xhs"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("success"):
+                    # Save QR image to file for the existing QR serving endpoints
+                    image_b64 = data.get("qr_image_data", "")
+                    if image_b64:
+                        output_dir = self._get_login_qrcode_dir()
+                        filename = f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+                        output_path = output_dir / filename
+                        output_path.write_bytes(base64.b64decode(image_b64))
+                        data["qr_filename"] = filename
+                        data["qr_image_path"] = str(output_path.resolve())
+                        # set a 4-min expiry
+                        expires = datetime.now(tz=self._get_app_timezone()) + timedelta(minutes=4)
+                        data["expires_at"] = expires.isoformat()
+                        self._save_login_qrcode_meta(data)
+                return data
+        except httpx.ConnectError:
+            return {"success": False, "message": "无法连接 renderer 服务"}
+        except Exception as e:
+            logger.error(f"[XHS] Playwright login start failed: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def poll_playwright_login(self, session_id: str) -> Dict[str, Any]:
+        """
+        轮询 renderer 的 Playwright 登录状态。
+
+        Returns:
+            {"status": "pending"|"logged_in"|"expired", "cookies": [...] if logged_in}
+        """
+        url = f"{self._get_renderer_url()}/login-xhs/status/{session_id}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Auto-inject cookies if login succeeded
+                if data.get("status") == "logged_in" and data.get("cookies"):
+                    save_result = await self.verify_and_save_cookies(data["cookies"])
+                    data["cookie_injected"] = save_result.get("success", False)
+                    data["login_verified"] = save_result.get("login_verified", False)
+
+                return data
+        except httpx.ConnectError:
+            return {"status": "error", "message": "无法连接 renderer 服务"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
 
 # 全局单例

@@ -9,6 +9,7 @@ from app.schemas import (
     OutputFileListResponse, OutputFileInfo, OutputFileContentResponse,
     WorkflowStatusResponse, LLMProviderConfig,
     XhsPublishRequest, XhsLoginQrcodeResponse,
+    XhsUploadCookiesRequest, XhsUploadCookiesResponse,
     TitleCardRenderRequest, RadarCardRenderRequest,
     TimelineCardRenderRequest, TrendCardRenderRequest, ImpactCardRenderRequest,
     DailyRankCardRenderRequest, HotTopicCardRenderRequest, CardRenderResponse,
@@ -493,6 +494,15 @@ async def get_xhs_login_qrcode(request: Request):
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
     result = await xiaohongshu_publisher.get_login_qrcode()
+
+    # xhs-mcp returns already_logged_in=True when user is already logged in
+    if result.get("already_logged_in"):
+        return XhsLoginQrcodeResponse(
+            success=True,
+            message=result.get("message", "已登录，无需扫码"),
+            login_method="xhs-mcp",
+        )
+
     if not result.get("success"):
         return XhsLoginQrcodeResponse(
             success=False,
@@ -565,6 +575,73 @@ async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
         expires_at=result.get("expires_at"),
         data=result.get("data")
     )
+
+
+# ---- Phase 1: Cookie 注入 ----
+
+@router.post("/xhs/upload-cookies", response_model=XhsUploadCookiesResponse)
+async def upload_xhs_cookies(request: XhsUploadCookiesRequest):
+    """上传 cookies 到 xhs-mcp sidecar 的挂载路径并验证登录态。
+
+    适用场景：
+    - 宿主机完成 xiaohongshu-login 后，将 cookies.json 注入 Docker 环境
+    - MCP 客户端手动注入 cookies
+    """
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    result = await xiaohongshu_publisher.verify_and_save_cookies(request.cookies)
+    return XhsUploadCookiesResponse(**result)
+
+
+# ---- Phase 2: Playwright 登录代理 ----
+
+@router.get("/xhs/login-qrcode-v2", response_model=XhsLoginQrcodeResponse)
+async def get_xhs_login_qrcode_v2(request: Request):
+    """通过 Playwright 代理（renderer 服务）获取小红书登录二维码。
+
+    不依赖 xhs-mcp 的原生登录实现，改用 Playwright 直接访问
+    xiaohongshu.com 截取 QR 码，扫码成功后自动提取 cookies 并
+    注入到 xhs-mcp 的 volume 挂载路径。
+    """
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    result = await xiaohongshu_publisher.start_playwright_login()
+    if not result.get("success"):
+        return XhsLoginQrcodeResponse(
+            success=False,
+            message=result.get("message", "Playwright 登录启动失败"),
+            login_method="playwright",
+        )
+
+    qr_filename = result.get("qr_filename", "")
+    qr_route, qr_url = ("", "")
+    if qr_filename:
+        qr_route, qr_url = _build_xhs_qrcode_urls(request, qr_filename)
+
+    return XhsLoginQrcodeResponse(
+        success=True,
+        message=result.get("message", "请使用小红书 App 扫码登录"),
+        qr_image_url=qr_url or None,
+        qr_image_route=qr_route or None,
+        qr_image_path=result.get("qr_image_path"),
+        expires_at=result.get("expires_at"),
+        login_method="playwright",
+        session_id=result.get("session_id"),
+    )
+
+
+@router.get("/xhs/login-qrcode-v2/status/{session_id}")
+async def poll_xhs_login_v2(session_id: str):
+    """轮询 Playwright 登录状态。
+
+    返回:
+      - status: "pending" / "logged_in" / "expired" / "error"
+      - cookie_injected: bool (logged_in 时)
+      - login_verified: bool (logged_in 时)
+    """
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    return await xiaohongshu_publisher.poll_playwright_login(session_id)
 
 
 # ============================================================

@@ -246,6 +246,33 @@ class BackendClient:
                 "data": None
             }
 
+    async def get_xhs_status(self) -> Dict[str, Any]:
+        """获取小红书 MCP 服务状态和登录状态。"""
+        url = f"{self.base_url}/api/xhs/status"
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(url)
+                data = response.json()
+
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message") or f"API 返回 {response.status_code}",
+                    }
+
+                return {
+                    "success": True,
+                    "mcp_available": data.get("mcp_available", False),
+                    "login_status": data.get("login_status", False),
+                    "message": data.get("message", ""),
+                }
+
+        except httpx.ConnectError as e:
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
     async def get_xhs_login_qrcode(self) -> Dict[str, Any]:
         """获取小红书登录二维码信息。"""
         url = f"{self.base_url}/api/xhs/login-qrcode"
@@ -277,6 +304,75 @@ class BackendClient:
                 "success": False,
                 "message": str(e),
             }
+
+    # ============================================================
+    # Cookie 注入 (Phase 1)
+    # ============================================================
+
+    async def upload_xhs_cookies(self, cookies_data: Any) -> Dict[str, Any]:
+        """将 cookies 上传到后端，由后端写入 xhs-mcp volume 并验证。"""
+        url = f"{self.base_url}/api/xhs/upload-cookies"
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    url,
+                    json={"cookies": cookies_data},
+                    headers={"Content-Type": "application/json"},
+                )
+                data = response.json()
+
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message") or f"API 返回 {response.status_code}",
+                    }
+
+                return data
+
+        except httpx.ConnectError as e:
+            logger.error(f"[BackendClient] 连接后端失败: {e}")
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
+            logger.exception(f"[BackendClient] 上传 cookies 异常: {e}")
+            return {"success": False, "message": str(e)}
+
+    # ============================================================
+    # Playwright 登录代理 (Phase 2)
+    # ============================================================
+
+    async def get_xhs_login_qrcode_v2(self) -> Dict[str, Any]:
+        """通过 Playwright 代理获取小红书登录二维码。"""
+        url = f"{self.base_url}/api/xhs/login-qrcode-v2"
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.get(url)
+                data = response.json()
+
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message") or f"API 返回 {response.status_code}",
+                    }
+
+                return data
+
+        except httpx.ConnectError as e:
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    async def poll_xhs_login_v2(self, session_id: str) -> Dict[str, Any]:
+        """轮询 Playwright 登录状态。"""
+        url = f"{self.base_url}/api/xhs/login-qrcode-v2/status/{session_id}"
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(url)
+                return response.json()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
     
     # ============================================================
     # 健康检查

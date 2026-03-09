@@ -25,7 +25,12 @@ from opinion_mcp.tools.analyze import (
 
 # 发布工具
 from opinion_mcp.tools.publish import (
+    check_xhs_status,
+    xhs_login,
     get_xhs_login_qrcode,
+    upload_xhs_cookies,
+    get_xhs_login_qrcode_v2,
+    poll_xhs_login_v2,
     publish_to_xhs,
 )
 
@@ -53,7 +58,12 @@ __all__ = [
     "update_copywriting",
     "generate_topic_cards",
     # 发布
+    "check_xhs_status",
+    "xhs_login",
     "get_xhs_login_qrcode",
+    "upload_xhs_cookies",
+    "get_xhs_login_qrcode_v2",
+    "poll_xhs_login_v2",
     "publish_to_xhs",
     # 设置和 Webhook
     "get_settings",

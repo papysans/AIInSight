@@ -147,6 +147,18 @@ class XhsStatusResponse(BaseModel):
     message: str
 
 
+class XhsUploadCookiesRequest(BaseModel):
+    """小红书 Cookie 上传请求"""
+    cookies: Any  # go-rod cookie JSON array or raw cookies.json content
+
+
+class XhsUploadCookiesResponse(BaseModel):
+    """小红书 Cookie 上传响应"""
+    success: bool
+    message: str
+    login_verified: bool = False
+
+
 class XhsLoginQrcodeResponse(BaseModel):
     """小红书登录二维码响应"""
     success: bool
@@ -155,6 +167,8 @@ class XhsLoginQrcodeResponse(BaseModel):
     qr_image_route: Optional[str] = None
     qr_image_path: Optional[str] = None
     expires_at: Optional[str] = None
+    login_method: Optional[str] = None  # "xhs-mcp" or "playwright"
+    session_id: Optional[str] = None  # Playwright login session ID
 
 
 # ============================================================
