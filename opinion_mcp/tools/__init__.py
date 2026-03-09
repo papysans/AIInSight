@@ -34,6 +34,9 @@ from opinion_mcp.tools.publish import (
     publish_to_xhs,
 )
 
+# 发布预检工具
+from opinion_mcp.tools.validate_publish import validate_publish
+
 # 设置和 Webhook 工具
 from opinion_mcp.tools.settings import (
     get_settings,
@@ -65,6 +68,8 @@ __all__ = [
     "get_xhs_login_qrcode_v2",
     "poll_xhs_login_v2",
     "publish_to_xhs",
+    # 发布预检
+    "validate_publish",
     # 设置和 Webhook
     "get_settings",
     "register_webhook",
