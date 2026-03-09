@@ -21,6 +21,7 @@ AIInSight MCP Server - AI 话题分析 MCP 服务器主入口
 
 import argparse
 import asyncio
+import inspect
 import json
 import signal
 import sys
@@ -46,6 +47,11 @@ from opinion_mcp.tools import (
     update_copywriting,
     generate_topic_cards,
     get_xhs_login_qrcode,
+    check_xhs_status,
+    xhs_login,
+    upload_xhs_cookies,
+    get_xhs_login_qrcode_v2,
+    poll_xhs_login_v2,
     publish_to_xhs,
     get_settings,
     register_webhook,
@@ -239,12 +245,26 @@ MCP_TOOLS: List[MCPTool] = [
         )
     ),
     MCPTool(
-        name="get_xhs_login_qrcode",
-        description="获取小红书登录二维码。返回二维码图片地址、相对路由和本地文件路径，供用户扫码登录。",
+        name="check_xhs_status",
+        description="检查小红书 MCP 服务可用性和登录状态。返回 mcp_available、login_status 和详细信息。发布前请先调用此工具确认登录状态。",
         inputSchema=MCPToolInput(
             type="object",
             properties={},
             required=[]
+        )
+    ),
+    MCPTool(
+        name="upload_xhs_cookies",
+        description="小红书登录工具。小红书会拦截 Docker 内无头测览览 QR 码登录，所以登录必须由用户在自己的真实浏览器中复制 Cookie 字符串（DevTools → Network → 任意请求 → Request Headers → Cookie），将其传入此工具注入并验证登录态。支持原始 Cookie 字符串（name=val; name=val）和 go-rod JSON 数组两种格式。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "cookies_data": {
+                    "type": ["array", "object", "string"],
+                    "description": "用户从浏览器复制的原始 Cookie 字符串，格式如 'web_session=xxx; abRequestId=xxx; ...'  或 go-rod JSON 数组"
+                }
+            },
+            required=["cookies_data"]
         )
     ),
     MCPTool(
@@ -478,7 +498,12 @@ TOOL_HANDLERS = {
     "get_analysis_status": get_analysis_status,
     "get_analysis_result": get_analysis_result,
     "update_copywriting": update_copywriting,
-    "get_xhs_login_qrcode": get_xhs_login_qrcode,
+    "get_xhs_login_qrcode": get_xhs_login_qrcode,  # kept for direct API use only, not in TOOLS list
+    "check_xhs_status": check_xhs_status,
+    "xhs_login": xhs_login,  # kept for direct API use only, not in TOOLS list
+    "upload_xhs_cookies": upload_xhs_cookies,
+    "get_xhs_login_qrcode_v2": get_xhs_login_qrcode_v2,  # kept for direct API use only, not in TOOLS list
+    "poll_xhs_login_v2": poll_xhs_login_v2,  # kept for direct API use only, not in TOOLS list
     "publish_to_xhs": publish_to_xhs,
     "get_settings": get_settings,
     "register_webhook": register_webhook,
@@ -499,6 +524,29 @@ TOOL_HANDLERS = {
 
 # 存储 SSE 会话
 _sse_sessions: Dict[str, asyncio.Queue] = {}
+
+
+def _filter_tool_arguments(tool_name: str, handler: Any, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    仅保留工具函数签名里声明过的参数，忽略客户端附带的保留字段。
+    """
+    if not arguments:
+        return {}
+
+    signature = inspect.signature(handler)
+    accepts_var_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
+    if accepts_var_kwargs:
+        return arguments
+
+    allowed = set(signature.parameters.keys())
+    filtered = {key: value for key, value in arguments.items() if key in allowed}
+    dropped = sorted(key for key in arguments.keys() if key not in allowed)
+    if dropped:
+        logger.warning(f"[MCP] 工具 {tool_name} 忽略未声明参数: {dropped}")
+    return filtered
 
 
 async def handle_jsonrpc_request(request_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -554,8 +602,8 @@ async def handle_jsonrpc_request(request_data: Dict[str, Any]) -> Optional[Dict[
                     }
                 }
             
-            # 调用工具
-            tool_result = await handler(**arguments)
+            filtered_arguments = _filter_tool_arguments(tool_name, handler, arguments)
+            tool_result = await handler(**filtered_arguments)
             result_text = json.dumps(tool_result, ensure_ascii=False, indent=2)
             
             result = {
@@ -813,8 +861,8 @@ async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
         )
     
     try:
-        # 调用工具函数
-        result = await handler(**arguments)
+        filtered_arguments = _filter_tool_arguments(tool_name, handler, arguments)
+        result = await handler(**filtered_arguments)
         
         # 格式化响应
         result_text = json.dumps(result, ensure_ascii=False, indent=2)
