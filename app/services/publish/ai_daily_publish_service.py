@@ -5,12 +5,53 @@ AI Daily 发布服务
 复用现有 XiaohongshuPublisher 的 MCP 调用能力。
 """
 
+import re
 from typing import Dict, Any, List, Optional
 from loguru import logger
 
 from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 from app.services.card_render_client import card_render_client
 from app.services.ai_daily_pipeline import get_topic_by_id, collect_ai_daily
+
+FALLBACK_TAGS = ["AI热点", "AI日报", "科技趋势", "人工智能", "科技资讯"]
+
+
+async def _generate_xhs_tags(title: str, summary: str = "", count: int = 5) -> List[str]:
+    """用 LLM 为小红书内容生成中文话题标签。失败时回退到固定标签。"""
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from app.llm import get_agent_llm
+
+        llm = get_agent_llm("writer")
+        prompt = (
+            f"你是小红书话题标签专家。请根据以下 AI 领域内容，生成 {count} 个适合小红书的中文话题标签。\n\n"
+            "【要求】\n"
+            "1. 每个标签 2-6 个中文字，纯中文，不含英文、数字、特殊符号\n"
+            "2. 标签必须是小红书上常见的热门话题词，如：人工智能、AI工具、科技趋势、效率提升、程序员日常 等\n"
+            "3. 不要输出 # 号，只输出标签文字，用逗号分隔\n"
+            "4. 不要输出任何解释\n\n"
+            "【示例输出】\n"
+            "人工智能,科技热点,效率神器,程序员,深度学习\n"
+        )
+        input_text = f"标题：{title}\n摘要：{summary[:200]}" if summary else f"标题：{title}"
+        resp = await llm.ainvoke([
+            SystemMessage(content=prompt),
+            HumanMessage(content=input_text),
+        ])
+        raw = getattr(resp, "content", "")
+        if isinstance(raw, list):
+            raw = "".join(str(c) for c in raw)
+        # 解析逗号/空格分隔的标签
+        candidates = re.split(r"[,，\s]+", raw.strip())
+        # 只保留纯中文标签
+        tags = [t.strip().lstrip("#") for t in candidates
+                if t.strip() and all("\u4e00" <= c <= "\u9fff" for c in t.strip().lstrip("#"))]
+        if tags:
+            logger.info(f"[AiDailyPublish] LLM generated tags: {tags[:count]}")
+            return tags[:count]
+    except Exception as e:
+        logger.warning(f"[AiDailyPublish] LLM tag generation failed: {e}")
+    return FALLBACK_TAGS[:count]
 
 
 async def publish_ai_daily_topic(
@@ -40,7 +81,13 @@ async def publish_ai_daily_topic(
 
     pub_title = title or topic.title
     pub_content = content or topic.summary_zh or topic.title
-    pub_tags = tags or topic.tags or []
+    # 优先使用自定义标签（过滤为中文），否则用 LLM 生成
+    if tags:
+        pub_tags = [t for t in tags if t and any('\u4e00' <= c <= '\u9fff' for c in t)]
+    else:
+        pub_tags = []
+    if not pub_tags:
+        pub_tags = await _generate_xhs_tags(pub_title, pub_content)
 
     # Generate cards
     types = card_types or ["title", "hot-topic"]
@@ -119,19 +166,21 @@ def _default_ranking_content(date_text: str, topics: List[Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def _default_ranking_tags(topics: List[Any], custom_tags: Optional[List[str]] = None) -> List[str]:
+async def _default_ranking_tags(topics: List[Any], custom_tags: Optional[List[str]] = None) -> List[str]:
+    """整榜发布标签：优先自定义，然后 LLM 生成，最后兜底固定标签。"""
     tags: List[str] = []
     for tag in (custom_tags or []):
-        if tag not in tags:
-            tags.append(tag)
-    for topic in topics[:5]:
-        for tag in (topic.tags or [])[:2]:
-            if tag not in tags:
-                tags.append(tag)
-    for tag in ["AI热点", "AI日报", "科技趋势"]:
-        if tag not in tags:
-            tags.append(tag)
-    return tags[:8]
+        cleaned = tag.strip().lstrip("#")
+        if cleaned and cleaned not in tags and any('\u4e00' <= c <= '\u9fff' for c in cleaned):
+            tags.append(cleaned)
+    if len(tags) < 5:
+        # 用榜单前几个话题的标题拼接给 LLM 生成标签
+        titles = " / ".join(t.title for t in (topics or [])[:5])
+        ai_tags = await _generate_xhs_tags(f"AI热点榜单：{titles}", count=5 - len(tags))
+        for t in ai_tags:
+            if t not in tags:
+                tags.append(t)
+    return tags[:5]
 
 
 async def generate_ai_daily_ranking_cards(
@@ -186,7 +235,7 @@ async def publish_ai_daily_ranking(
 
     title_text = title or _default_ranking_title(ranking.date, len(topics))
     content_text = content or _default_ranking_content(ranking.date, topics)
-    final_tags = _default_ranking_tags(topics, tags)
+    final_tags = await _default_ranking_tags(topics, tags)
 
     card_result = await generate_ai_daily_ranking_cards(
         limit=len(topics),
