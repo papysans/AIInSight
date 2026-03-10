@@ -97,51 +97,26 @@ async def analyze_ai_topic(
     topic_id: str,
     depth: str = "standard",
 ) -> Dict[str, Any]:
-    """
-    对 AI 日报中的某个话题启动深度分析（走统一 evidence-first 工作流）
-
-    Args:
-        topic_id: 话题 ID（从 get_ai_daily 返回）
-        depth: 分析深度 quick / standard / deep
-
-    Returns:
-        Dict 包含 job_id 和分析结果
-    """
     logger.info(f"[analyze_ai_topic] topic_id={topic_id}, depth={depth}")
 
     if depth not in ("quick", "standard", "deep"):
         depth = "standard"
 
     try:
-        # Step 1: 获取话题详情
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                f"{config.BACKEND_URL.rstrip('/')}/api/ai-daily/{topic_id}",
+        async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:
+            resp = await client.post(
+                f"{config.BACKEND_URL.rstrip('/')}/api/ai-daily/{topic_id}/analyze",
+                json={"depth": depth},
             )
             resp.raise_for_status()
-            topic_data = resp.json().get("topic", {})
+            data = resp.json()
 
-        topic_title = topic_data.get("title", "")
-        if not topic_title:
-            return {"success": False, "error": f"话题 {topic_id} 无标题", "topic_id": topic_id}
-
-        # 构建含上下文的 topic 文本
-        topic_text = topic_title
-        summary_zh = topic_data.get("summary_zh", "")
-        if summary_zh:
-            topic_text += f"\n{summary_zh}"
-
-        # Step 2: 走统一 analyze_topic 工作流
-        from opinion_mcp.tools.analyze import analyze_topic
-        result = await analyze_topic(
-            topic=topic_text,
-            depth=depth,
-        )
-
-        if result.get("success"):
-            result["topic_id"] = topic_id
-
-        return result
+        return {
+            "success": True,
+            "topic_id": data.get("topic_id", topic_id),
+            "depth": data.get("depth", depth),
+            "analysis": data.get("analysis", {}),
+        }
 
     except Exception as e:
         logger.error(f"[analyze_ai_topic] 失败: {e}")
@@ -166,7 +141,9 @@ async def generate_ai_daily_cards(
     Returns:
         Dict 包含各卡片的 dataURL
     """
-    logger.info(f"[generate_ai_daily_cards] topic_id={topic_id}, card_types={card_types}")
+    logger.info(
+        f"[generate_ai_daily_cards] topic_id={topic_id}, card_types={card_types}"
+    )
 
     try:
         payload: Dict[str, Any] = {}
@@ -265,7 +242,9 @@ async def generate_ai_daily_ranking_cards(
     card_types: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """为今日 AI 热点整榜生成卡片套图。"""
-    logger.info(f"[generate_ai_daily_ranking_cards] limit={limit}, card_types={card_types}")
+    logger.info(
+        f"[generate_ai_daily_ranking_cards] limit={limit}, card_types={card_types}"
+    )
 
     try:
         payload: Dict[str, Any] = {"limit": limit}
