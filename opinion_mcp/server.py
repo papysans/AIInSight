@@ -69,8 +69,10 @@ from opinion_mcp.tools.validate_publish import validate_publish
 # MCP 协议数据模型
 # ============================================================
 
+
 class MCPToolInput(BaseModel):
     """MCP 工具输入参数"""
+
     type: str = "object"
     properties: Dict[str, Any] = Field(default_factory=dict)
     required: List[str] = Field(default_factory=list)
@@ -78,6 +80,7 @@ class MCPToolInput(BaseModel):
 
 class MCPTool(BaseModel):
     """MCP 工具定义"""
+
     name: str
     description: str
     inputSchema: MCPToolInput
@@ -85,23 +88,27 @@ class MCPTool(BaseModel):
 
 class MCPToolsResponse(BaseModel):
     """MCP 工具列表响应"""
+
     tools: List[MCPTool]
 
 
 class MCPCallToolRequest(BaseModel):
     """MCP 工具调用请求"""
+
     name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MCPCallToolResponse(BaseModel):
     """MCP 工具调用响应"""
+
     content: List[Dict[str, Any]]
     isError: bool = False
 
 
 class MCPServerInfo(BaseModel):
     """MCP 服务器信息"""
+
     name: str
     version: str
     protocolVersion: str = "2024-11-05"
@@ -109,6 +116,7 @@ class MCPServerInfo(BaseModel):
 
 class MCPInitializeResponse(BaseModel):
     """MCP 初始化响应"""
+
     serverInfo: MCPServerInfo
     capabilities: Dict[str, Any]
 
@@ -124,6 +132,7 @@ _shutdown_event: Optional[asyncio.Event] = None
 # ============================================================
 # 7.2 初始化 FastAPI 应用 (MCP 兼容)
 # ============================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -167,35 +176,35 @@ MCP_TOOLS: List[MCPTool] = [
                 "source_groups": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "来源组列表，可选值: media, research, code, community。留空使用全部"
+                    "description": "来源组列表，可选值: media, research, code, community。留空使用全部",
                 },
                 "source_names": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "指定来源列表，如 hn, reddit, aibase 等。与 source_groups 互斥"
+                    "description": "指定来源列表，如 hn, reddit, aibase 等。与 source_groups 互斥",
                 },
                 "depth": {
                     "type": "string",
                     "enum": ["quick", "standard", "deep"],
                     "default": "standard",
-                    "description": "分析深度: quick(快速)/standard(标准)/deep(深度)"
+                    "description": "分析深度: quick(快速)/standard(标准)/deep(深度)",
                 },
                 "debate_rounds": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 5,
-                    "description": "辩论轮数 (0-5)，留空则由 depth 决定"
+                    "description": "辩论轮数 (0-5)，留空则由 depth 决定",
                 },
                 "image_count": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9,
                     "default": 0,
-                    "description": "生成图片数量 (0-9)，0表示不生图"
-                }
+                    "description": "生成图片数量 (0-9)，0表示不生图",
+                },
             },
-            required=["topic"]
-        )
+            required=["topic"],
+        ),
     ),
     MCPTool(
         name="get_analysis_status",
@@ -205,11 +214,11 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "job_id": {
                     "type": "string",
-                    "description": "任务 ID，由 analyze_topic 返回。留空则查询最近一次任务"
+                    "description": "任务 ID，由 analyze_topic 返回。留空则查询最近一次任务",
                 }
             },
-            required=[]
-        )
+            required=[],
+        ),
     ),
     MCPTool(
         name="get_analysis_result",
@@ -219,11 +228,11 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "job_id": {
                     "type": "string",
-                    "description": "任务 ID。留空则获取最近一次完成的任务结果"
+                    "description": "任务 ID。留空则获取最近一次完成的任务结果",
                 }
             },
-            required=[]
-        )
+            required=[],
+        ),
     ),
     MCPTool(
         name="update_copywriting",
@@ -233,39 +242,41 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "job_id": {"type": "string", "description": "任务 ID"},
                 "title": {"type": "string", "description": "新标题（留空则不修改）"},
-                "subtitle": {"type": "string", "description": "新副标题（留空则不修改）"},
-                "content": {"type": "string", "description": "新正文内容（留空则不修改）"},
+                "subtitle": {
+                    "type": "string",
+                    "description": "新副标题（留空则不修改）",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "新正文内容（留空则不修改）",
+                },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "新标签列表（留空则不修改）"
-                }
+                    "description": "新标签列表（留空则不修改）",
+                },
             },
-            required=["job_id"]
-        )
+            required=["job_id"],
+        ),
     ),
     MCPTool(
         name="check_xhs_status",
         description="检查小红书 MCP 服务可用性和登录状态。返回 mcp_available、login_status 和详细信息。发布前请先调用此工具确认登录状态。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={},
-            required=[]
-        )
+        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
     ),
     MCPTool(
         name="upload_xhs_cookies",
-        description="小红书登录工具。小红书会拦截 Docker 内无头测览览 QR 码登录，所以登录必须由用户在自己的真实浏览器中复制 Cookie 字符串（DevTools → Network → 任意请求 → Request Headers → Cookie），将其传入此工具注入并验证登录态。支持原始 Cookie 字符串（name=val; name=val）和 go-rod JSON 数组两种格式。",
+        description="小红书登录工具。公开 MCP 登录流程仅支持由用户在真实浏览器中复制原始 Cookie 字符串（DevTools → Network → 任意请求 → Request Headers → Cookie），再将其传入此工具完成注入和登录态验证。",
         inputSchema=MCPToolInput(
             type="object",
             properties={
                 "cookies_data": {
-                    "type": ["array", "object", "string"],
-                    "description": "用户从浏览器复制的原始 Cookie 字符串，格式如 'web_session=xxx; abRequestId=xxx; ...'  或 go-rod JSON 数组"
+                    "type": "string",
+                    "description": "用户从真实浏览器复制的原始 Cookie 字符串，格式如 'web_session=xxx; abRequestId=xxx; ...'。这是公开 MCP 接口唯一保证兼容的输入格式。",
                 }
             },
-            required=["cookies_data"]
-        )
+            required=["cookies_data"],
+        ),
     ),
     MCPTool(
         name="publish_to_xhs",
@@ -273,25 +284,27 @@ MCP_TOOLS: List[MCPTool] = [
         inputSchema=MCPToolInput(
             type="object",
             properties={
-                "job_id": {"type": "string", "description": "分析任务 ID，将使用该任务的结果发布"},
-                "title": {"type": "string", "description": "自定义标题，留空则使用分析结果的标题"},
+                "job_id": {
+                    "type": "string",
+                    "description": "分析任务 ID，将使用该任务的结果发布",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "自定义标题，留空则使用分析结果的标题",
+                },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "话题标签列表，留空则使用分析结果的标签"
-                }
+                    "description": "话题标签列表，留空则使用分析结果的标签",
+                },
             },
-            required=["job_id"]
-        )
+            required=["job_id"],
+        ),
     ),
     MCPTool(
         name="get_settings",
         description="获取当前的分析配置，包括来源组、深度预设、可用来源等",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={},
-            required=[]
-        )
+        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
     ),
     MCPTool(
         name="register_webhook",
@@ -300,10 +313,10 @@ MCP_TOOLS: List[MCPTool] = [
             type="object",
             properties={
                 "callback_url": {"type": "string", "description": "接收进度推送的 URL"},
-                "job_id": {"type": "string", "description": "要监听的任务 ID"}
+                "job_id": {"type": "string", "description": "要监听的任务 ID"},
             },
-            required=["callback_url", "job_id"]
-        )
+            required=["callback_url", "job_id"],
+        ),
     ),
     MCPTool(
         name="validate_publish",
@@ -313,11 +326,11 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "job_id": {
                     "type": "string",
-                    "description": "任务 ID，留空则使用最近完成的任务"
+                    "description": "任务 ID，留空则使用最近完成的任务",
                 }
             },
-            required=[]
-        )
+            required=[],
+        ),
     ),
     MCPTool(
         name="generate_topic_cards",
@@ -327,16 +340,16 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "job_id": {
                     "type": "string",
-                    "description": "任务 ID，由 analyze_topic 返回"
+                    "description": "任务 ID，由 analyze_topic 返回",
                 },
                 "card_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "卡片类型列表: title / impact / radar / timeline / hot-topic，留空使用默认"
-                }
+                    "description": "卡片类型列表: title / impact / radar / timeline / hot-topic，留空使用默认",
+                },
             },
-            required=["job_id"]
-        )
+            required=["job_id"],
+        ),
     ),
     MCPTool(
         name="get_ai_daily",
@@ -347,16 +360,16 @@ MCP_TOOLS: List[MCPTool] = [
                 "force_refresh": {
                     "type": "boolean",
                     "default": False,
-                    "description": "是否强制刷新（忽略缓存），默认 False"
+                    "description": "是否强制刷新（忽略缓存），默认 False",
                 },
                 "sources": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "指定数据源列表（aibase/jiqizhixin/qbitai/github_trending/producthunt_ai/hf_papers/techcrunch_ai），留空使用全部"
-                }
+                    "description": "指定数据源列表（aibase/jiqizhixin/qbitai/github_trending/producthunt_ai/hf_papers/techcrunch_ai），留空使用全部",
+                },
             },
-            required=[]
-        )
+            required=[],
+        ),
     ),
     MCPTool(
         name="analyze_ai_topic",
@@ -366,17 +379,17 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "topic_id": {
                     "type": "string",
-                    "description": "话题 ID，从 get_ai_daily 返回的 topics 中获取"
+                    "description": "话题 ID，从 get_ai_daily 返回的 topics 中获取",
                 },
                 "depth": {
                     "type": "string",
                     "enum": ["quick", "standard", "deep"],
                     "default": "standard",
-                    "description": "分析深度: quick(快速) / standard(标准) / deep(深度)"
-                }
+                    "description": "分析深度: quick(快速) / standard(标准) / deep(深度)",
+                },
             },
-            required=["topic_id"]
-        )
+            required=["topic_id"],
+        ),
     ),
     MCPTool(
         name="generate_ai_daily_cards",
@@ -384,18 +397,15 @@ MCP_TOOLS: List[MCPTool] = [
         inputSchema=MCPToolInput(
             type="object",
             properties={
-                "topic_id": {
-                    "type": "string",
-                    "description": "话题 ID"
-                },
+                "topic_id": {"type": "string", "description": "话题 ID"},
                 "card_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "卡片类型列表: title / hot-topic / daily-rank，留空则生成默认套图"
-                }
+                    "description": "卡片类型列表: title / hot-topic / daily-rank，留空则生成默认套图",
+                },
             },
-            required=["topic_id"]
-        )
+            required=["topic_id"],
+        ),
     ),
     MCPTool(
         name="publish_ai_daily",
@@ -405,29 +415,29 @@ MCP_TOOLS: List[MCPTool] = [
             properties={
                 "topic_id": {
                     "type": "string",
-                    "description": "话题 ID（从 get_ai_daily 返回）"
+                    "description": "话题 ID（从 get_ai_daily 返回）",
                 },
                 "title": {
                     "type": "string",
-                    "description": "自定义标题，留空使用话题标题"
+                    "description": "自定义标题，留空使用话题标题",
                 },
                 "content": {
                     "type": "string",
-                    "description": "自定义正文，留空使用话题摘要"
+                    "description": "自定义正文，留空使用话题摘要",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "自定义标签列表"
+                    "description": "自定义标签列表",
                 },
                 "card_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "卡片类型列表: title / hot-topic / daily-rank，留空使用默认"
-                }
+                    "description": "卡片类型列表: title / hot-topic / daily-rank，留空使用默认",
+                },
             },
-            required=["topic_id"]
-        )
+            required=["topic_id"],
+        ),
     ),
     MCPTool(
         name="generate_ai_daily_ranking_cards",
@@ -440,20 +450,17 @@ MCP_TOOLS: List[MCPTool] = [
                     "minimum": 1,
                     "maximum": 10,
                     "default": 10,
-                    "description": "榜单条数，默认 10"
+                    "description": "榜单条数，默认 10",
                 },
-                "title": {
-                    "type": "string",
-                    "description": "自定义榜单标题"
-                },
+                "title": {"type": "string", "description": "自定义榜单标题"},
                 "card_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "卡片类型列表: title / daily-rank，留空使用默认"
-                }
+                    "description": "卡片类型列表: title / daily-rank，留空使用默认",
+                },
             },
-            required=[]
-        )
+            required=[],
+        ),
     ),
     MCPTool(
         name="publish_ai_daily_ranking",
@@ -466,29 +473,23 @@ MCP_TOOLS: List[MCPTool] = [
                     "minimum": 1,
                     "maximum": 10,
                     "default": 10,
-                    "description": "榜单条数，默认 10"
+                    "description": "榜单条数，默认 10",
                 },
-                "title": {
-                    "type": "string",
-                    "description": "自定义标题"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "自定义正文"
-                },
+                "title": {"type": "string", "description": "自定义标题"},
+                "content": {"type": "string", "description": "自定义正文"},
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "自定义标签列表"
+                    "description": "自定义标签列表",
                 },
                 "card_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "卡片类型列表: title / daily-rank，留空使用默认"
-                }
+                    "description": "卡片类型列表: title / daily-rank，留空使用默认",
+                },
             },
-            required=[]
-        )
+            required=[],
+        ),
     ),
 ]
 
@@ -523,10 +524,12 @@ TOOL_HANDLERS = {
 # ============================================================
 
 # 存储 SSE 会话
-_sse_sessions: Dict[str, asyncio.Queue] = {}
+_sse_sessions: Dict[str, asyncio.Queue[Dict[str, Any]]] = {}
 
 
-def _filter_tool_arguments(tool_name: str, handler: Any, arguments: Dict[str, Any]) -> Dict[str, Any]:
+def _filter_tool_arguments(
+    tool_name: str, handler: Any, arguments: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     仅保留工具函数签名里声明过的参数，忽略客户端附带的保留字段。
     """
@@ -549,66 +552,58 @@ def _filter_tool_arguments(tool_name: str, handler: Any, arguments: Dict[str, An
     return filtered
 
 
-async def handle_jsonrpc_request(request_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+async def handle_jsonrpc_request(
+    request_data: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
     """
     处理 JSON-RPC 请求
-    
+
     Args:
         request_data: JSON-RPC 请求数据
-        
+
     Returns:
         JSON-RPC 响应，如果是通知则返回 None
     """
     method = request_data.get("method", "")
     params = request_data.get("params", {})
     request_id = request_data.get("id")
-    
+
     logger.debug(f"[MCP] JSON-RPC 请求: method={method}, id={request_id}")
-    
+
     # 通知消息不需要响应
     if request_id is None:
         return None
-    
+
     try:
         if method == "initialize":
             result = {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {
-                    "name": "Opinion Analyzer",
-                    "version": "1.0.0"
-                },
-                "capabilities": {
-                    "tools": {"listChanged": False}
-                }
+                "serverInfo": {"name": "Opinion Analyzer", "version": "1.0.0"},
+                "capabilities": {"tools": {"listChanged": False}},
             }
         elif method == "tools/list":
-            result = {
-                "tools": [tool.model_dump() for tool in MCP_TOOLS]
-            }
+            result = {"tools": [tool.model_dump() for tool in MCP_TOOLS]}
         elif method == "tools/call":
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
-            
+
             logger.info(f"[MCP] 调用工具: {tool_name}, 参数: {arguments}")
-            
+
             handler = TOOL_HANDLERS.get(tool_name)
             if not handler:
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
-                    "error": {
-                        "code": -32601,
-                        "message": f"未知工具: {tool_name}"
-                    }
+                    "error": {"code": -32601, "message": f"未知工具: {tool_name}"},
                 }
-            
+
             filtered_arguments = _filter_tool_arguments(tool_name, handler, arguments)
             tool_result = await handler(**filtered_arguments)
             result_text = json.dumps(tool_result, ensure_ascii=False, indent=2)
-            
+
             result = {
                 "content": [{"type": "text", "text": result_text}],
-                "isError": False
+                "isError": False,
             }
         elif method == "ping":
             result = {}
@@ -616,27 +611,17 @@ async def handle_jsonrpc_request(request_data: Dict[str, Any]) -> Optional[Dict[
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": f"未知方法: {method}"
-                }
+                "error": {"code": -32601, "message": f"未知方法: {method}"},
             }
-        
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result
-        }
-        
+
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
     except Exception as e:
         logger.exception(f"[MCP] 处理请求失败: {e}")
         return {
             "jsonrpc": "2.0",
             "id": request_id,
-            "error": {
-                "code": -32603,
-                "message": str(e)
-            }
+            "error": {"code": -32603, "message": str(e)},
         }
 
 
@@ -644,28 +629,30 @@ async def handle_jsonrpc_request(request_data: Dict[str, Any]) -> Optional[Dict[
 async def sse_endpoint(request: Request):
     """
     SSE 端点 - 标准 MCP 协议传输层
-    
+
     客户端通过此端点建立 SSE 连接，接收服务器推送的消息。
     """
     session_id = str(uuid.uuid4())
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
     _sse_sessions[session_id] = queue
-    
+
     logger.info(f"[MCP] SSE 连接建立: session={session_id}")
-    
+
     async def event_generator():
         try:
             # 发送 endpoint 事件，告知客户端 POST 消息的地址
-            endpoint_event = f"event: endpoint\ndata: /message?sessionId={session_id}\n\n"
+            endpoint_event = (
+                f"event: endpoint\ndata: /message?sessionId={session_id}\n\n"
+            )
             yield endpoint_event
-            
+
             # 持续发送队列中的消息
             while True:
                 try:
                     # 检查客户端是否断开
                     if await request.is_disconnected():
                         break
-                    
+
                     # 等待消息，超时后继续循环检查连接
                     try:
                         message = await asyncio.wait_for(queue.get(), timeout=30.0)
@@ -673,15 +660,15 @@ async def sse_endpoint(request: Request):
                     except asyncio.TimeoutError:
                         # 发送心跳
                         yield ": heartbeat\n\n"
-                        
+
                 except asyncio.CancelledError:
                     break
-                    
+
         finally:
             # 清理会话
             _sse_sessions.pop(session_id, None)
             logger.info(f"[MCP] SSE 连接关闭: session={session_id}")
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -689,15 +676,15 @@ async def sse_endpoint(request: Request):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )
 
 
 @app.post("/message")
-async def message_endpoint(request: Request, sessionId: str = None):
+async def message_endpoint(request: Request, sessionId: Optional[str] = None):
     """
     消息端点 - 接收客户端的 JSON-RPC 请求
-    
+
     客户端通过此端点发送 JSON-RPC 请求，响应通过 SSE 推送。
     """
     try:
@@ -705,28 +692,28 @@ async def message_endpoint(request: Request, sessionId: str = None):
     except Exception as e:
         logger.error(f"[MCP] 解析请求体失败: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
-    
+
     logger.debug(f"[MCP] 收到消息: session={sessionId}, body={body}")
-    
+
     # 支持批量请求
     if isinstance(body, list):
         requests = body
     else:
         requests = [body]
-    
+
     responses = []
     for req in requests:
         response = await handle_jsonrpc_request(req)
         if response is not None:
             responses.append(response)
-    
+
     # 如果有 SSE 会话，通过 SSE 推送响应
     if sessionId and sessionId in _sse_sessions:
         queue = _sse_sessions[sessionId]
         for resp in responses:
             await queue.put(resp)
         return {"status": "accepted"}
-    
+
     # 否则直接返回响应
     if len(responses) == 1:
         return responses[0]
@@ -743,19 +730,19 @@ async def mcp_post_endpoint(request: Request):
     except Exception as e:
         logger.error(f"[MCP] 解析请求体失败: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
-    
+
     # 支持批量请求
     if isinstance(body, list):
         requests = body
     else:
         requests = [body]
-    
+
     responses = []
     for req in requests:
         response = await handle_jsonrpc_request(req)
         if response is not None:
             responses.append(response)
-    
+
     if len(responses) == 1:
         return responses[0]
     return responses
@@ -770,10 +757,7 @@ async def mcp_info():
         "protocolVersion": "2024-11-05",
         "description": "GlobalInSight 舆论分析 MCP 服务",
         "transport": "sse",
-        "endpoints": {
-            "sse": "/sse",
-            "message": "/message"
-        }
+        "endpoints": {"sse": "/sse", "message": "/message"},
     }
 
 
@@ -787,11 +771,7 @@ async def root_get():
         "protocolVersion": "2024-11-05",
         "description": "GlobalInSight 舆论分析 MCP 服务",
         "transport": "sse",
-        "endpoints": {
-            "sse": "/sse",
-            "message": "/message",
-            "mcp": "/mcp"
-        }
+        "endpoints": {"sse": "/sse", "message": "/message", "mcp": "/mcp"},
     }
 
 
@@ -803,19 +783,19 @@ async def root_post(request: Request):
     except Exception as e:
         logger.error(f"[MCP] 解析请求体失败: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
-    
+
     # 支持批量请求
     if isinstance(body, list):
         requests = body
     else:
         requests = [body]
-    
+
     responses = []
     for req in requests:
         response = await handle_jsonrpc_request(req)
         if response is not None:
             responses.append(response)
-    
+
     if len(responses) == 1:
         return responses[0]
     return responses if responses else {"status": "ok"}
@@ -826,13 +806,11 @@ async def mcp_initialize() -> MCPInitializeResponse:
     """MCP 初始化端点 (HTTP 模式)"""
     return MCPInitializeResponse(
         serverInfo=MCPServerInfo(
-            name="Opinion Analyzer",
-            version="1.0.0",
-            protocolVersion="2024-11-05"
+            name="Opinion Analyzer", version="1.0.0", protocolVersion="2024-11-05"
         ),
         capabilities={
             "tools": {"listChanged": False},
-        }
+        },
     )
 
 
@@ -848,37 +826,34 @@ async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
     """MCP 工具调用端点 (HTTP 模式)"""
     tool_name = request.name
     arguments = request.arguments
-    
+
     logger.info(f"[MCP] 调用工具: {tool_name}, 参数: {arguments}")
-    
+
     # 查找工具处理函数
     handler = TOOL_HANDLERS.get(tool_name)
     if not handler:
         logger.error(f"[MCP] 未知工具: {tool_name}")
         return MCPCallToolResponse(
-            content=[{"type": "text", "text": f"未知工具: {tool_name}"}],
-            isError=True
+            content=[{"type": "text", "text": f"未知工具: {tool_name}"}], isError=True
         )
-    
+
     try:
         filtered_arguments = _filter_tool_arguments(tool_name, handler, arguments)
         result = await handler(**filtered_arguments)
-        
+
         # 格式化响应
         result_text = json.dumps(result, ensure_ascii=False, indent=2)
-        
+
         logger.info(f"[MCP] 工具 {tool_name} 执行成功")
-        
+
         return MCPCallToolResponse(
-            content=[{"type": "text", "text": result_text}],
-            isError=False
+            content=[{"type": "text", "text": result_text}], isError=False
         )
-        
+
     except Exception as e:
         logger.exception(f"[MCP] 工具 {tool_name} 执行失败: {e}")
         return MCPCallToolResponse(
-            content=[{"type": "text", "text": f"工具执行失败: {str(e)}"}],
-            isError=True
+            content=[{"type": "text", "text": f"工具执行失败: {str(e)}"}], isError=True
         )
 
 
@@ -886,17 +861,18 @@ async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
 # 7.4 实现健康检查端点
 # ============================================================
 
+
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
     """
     健康检查端点
-    
+
     返回服务器状态信息，用于监控和负载均衡。
     """
     uptime_seconds = None
     if _server_started_at:
         uptime_seconds = (datetime.now() - _server_started_at).total_seconds()
-    
+
     return {
         "status": "healthy",
         "service": "AIInSight MCP Server",
@@ -912,9 +888,11 @@ async def health_check() -> Dict[str, Any]:
 # 直接 API 端点 (便于测试和兼容)
 # ============================================================
 
+
 # 请求体模型
 class AnalyzeTopicRequest(BaseModel):
     """分析话题请求体"""
+
     topic: str
     source_groups: Optional[List[str]] = None
     source_names: Optional[List[str]] = None
@@ -925,17 +903,20 @@ class AnalyzeTopicRequest(BaseModel):
 
 class JobIdRequest(BaseModel):
     """任务 ID 请求体"""
+
     job_id: Optional[str] = None
 
 
 class HotNewsRequest(BaseModel):
     """AI 日报请求体（兼容旧路由名）"""
+
     force_refresh: bool = False
     sources: Optional[List[str]] = None
 
 
 class PublishXhsRequest(BaseModel):
     """发布小红书请求体"""
+
     job_id: str
     title: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -950,12 +931,14 @@ async def direct_get_xhs_login_qrcode() -> Dict[str, Any]:
 
 class WebhookRequest(BaseModel):
     """Webhook 注册请求体"""
+
     callback_url: str
     job_id: str
 
 
 class UpdateCopywritingRequest(BaseModel):
     """更新文案请求体"""
+
     job_id: str
     title: Optional[str] = None
     subtitle: Optional[str] = None
@@ -987,8 +970,16 @@ async def direct_analyze_topic_get(
     image_count: int = 0,
 ) -> Dict[str, Any]:
     """直接调用分析工具（GET 请求）"""
-    group_list = [g.strip() for g in source_groups.split(",") if g.strip()] if source_groups else None
-    source_list = [s.strip() for s in source_names.split(",") if s.strip()] if source_names else None
+    group_list = (
+        [g.strip() for g in source_groups.split(",") if g.strip()]
+        if source_groups
+        else None
+    )
+    source_list = (
+        [s.strip() for s in source_names.split(",") if s.strip()]
+        if source_names
+        else None
+    )
 
     return await analyze_topic(
         topic=topic,
@@ -1051,7 +1042,9 @@ async def direct_get_hotnews_get(
     sources: Optional[str] = None,
 ) -> Dict[str, Any]:
     """直接获取 AI 日报（GET 请求，兼容旧路由名）"""
-    source_list = [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+    source_list = (
+        [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+    )
     return await get_ai_daily(force_refresh=force_refresh, sources=source_list)
 
 
@@ -1095,6 +1088,7 @@ async def direct_update_copywriting(body: UpdateCopywritingRequest) -> Dict[str,
 
 class ValidatePublishRequest(BaseModel):
     """发布验证请求体"""
+
     job_id: Optional[str] = None
 
 
@@ -1170,10 +1164,11 @@ async def api_get_settings() -> Dict[str, Any]:
 # 7.5 实现命令行参数解析 (--port)
 # ============================================================
 
+
 def parse_args() -> argparse.Namespace:
     """
     解析命令行参数
-    
+
     Returns:
         解析后的参数命名空间
     """
@@ -1187,27 +1182,27 @@ def parse_args() -> argparse.Namespace:
     python -m opinion_mcp.server --host 0.0.0.0    # 监听所有接口
         """,
     )
-    
+
     parser.add_argument(
         "--port",
         type=int,
         default=config.MCP_PORT,
         help=f"服务器端口 (默认: {config.MCP_PORT})",
     )
-    
+
     parser.add_argument(
         "--host",
         type=str,
         default=config.MCP_HOST,
         help=f"服务器主机 (默认: {config.MCP_HOST})",
     )
-    
+
     parser.add_argument(
         "--debug",
         action="store_true",
         help="启用调试模式",
     )
-    
+
     return parser.parse_args()
 
 
@@ -1215,41 +1210,42 @@ def parse_args() -> argparse.Namespace:
 # 7.6 实现优雅关闭处理
 # ============================================================
 
+
 def setup_signal_handlers() -> None:
     """
     设置信号处理器，支持优雅关闭
     """
     global _shutdown_event
     _shutdown_event = asyncio.Event()
-    
+
     def signal_handler(signum, frame):
         """信号处理函数"""
         sig_name = signal.Signals(signum).name
         logger.info(f"收到信号 {sig_name}，正在优雅关闭...")
-        
+
         if _shutdown_event:
             _shutdown_event.set()
-    
+
     # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     # Unix 系统额外处理 SIGTERM
     if sys.platform != "win32":
         signal.signal(signal.SIGTERM, signal_handler)
-    
+
     logger.debug("信号处理器已设置")
 
 
 def log_startup_info(host: str, port: int) -> None:
     """
     记录启动信息
-    
+
     Args:
         host: 服务器主机
         port: 服务器端口
     """
     tools = [tool.name for tool in MCP_TOOLS]
-    
+
     logger.info("=" * 60)
     logger.info("AIInSight MCP Server 启动")
     logger.info("=" * 60)
@@ -1267,13 +1263,14 @@ def log_startup_info(host: str, port: int) -> None:
 # 主入口
 # ============================================================
 
+
 def main() -> None:
     """
     MCP 服务器主入口
     """
     # 解析命令行参数
     args = parse_args()
-    
+
     # 配置日志级别
     if args.debug:
         logger.remove()
@@ -1281,13 +1278,13 @@ def main() -> None:
     else:
         logger.remove()
         logger.add(sys.stderr, level="INFO")
-    
+
     # 设置信号处理器
     setup_signal_handlers()
-    
+
     # 记录启动信息
     log_startup_info(args.host, args.port)
-    
+
     try:
         # 运行 FastAPI 服务器
         uvicorn.run(
@@ -1296,7 +1293,7 @@ def main() -> None:
             port=args.port,
             log_level="debug" if args.debug else "info",
         )
-        
+
     except KeyboardInterrupt:
         logger.info("收到键盘中断，正在关闭...")
     except Exception as e:
