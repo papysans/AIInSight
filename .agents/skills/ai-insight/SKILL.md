@@ -32,7 +32,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 | **N0** | **不要每次都 force_refresh** | 采集需要请求多个外部站点，频繁刷新会被限流 |
 | **N1** | **不要跳过展示步骤** | 不能拿到日报后不展示就直接分析 |
 | **N2** | **不要自动发布** | 不能未经用户确认就发布到任何平台 |
-| **N3** | **禁止调用 `xhs_login` 或 `get_xhs_login_qrcode` 来登录** | 这两个工具会尝试 Docker 内 QR 码登录，小红书会检测并拦截无头浏览器。未登录时必须走 Cookie 注入流程（见下方章节） |
+| **N3** | **禁止调用 `xhs_login` 或 `get_xhs_login_qrcode` 来登录** | 这些是遗留的内部辅助路径，不属于当前支持的公开登录流程。未登录时必须走 Cookie 注入流程（见下方章节） |
 
 ---
 
@@ -63,7 +63,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 ### 注意事项
 - Cookie 有时效性，过期后需要重新注入
 - 让用户复制 **完整** 的 Cookie 值，不要遗漏
-- `upload_xhs_cookies` 同时支持原始 Cookie 字符串和 go-rod JSON 数组格式
+- MCP `upload_xhs_cookies` 的公开输入契约是原始 Cookie 字符串；后端内部可能兼容其他格式，但不应作为公开用法指导用户
 
 ---
 
@@ -136,7 +136,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 1. 如尚未生成卡片，调用 `generate_ai_daily_cards(topic_id, card_types)`
 2. 若返回了 `image_url`，优先把完整地址展示给用户；若没有再回退到 `output_path`
 3. 调用 `publish_ai_daily(topic_id, card_types)`
-4. 如果返回未登录或带有二维码字段，按「小红书登录流程」章节引导用户提取 Cookie 并注入，完成后再继续发布
+4. 如果返回未登录，按「小红书登录流程」章节引导用户提取 Cookie 并注入，完成后再继续发布
 5. 发布成功时返回结果与笔记链接
 
 ### 4. `/publish-today` — 将今天整榜做成小红书图文
@@ -197,7 +197,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 ```
 
 ### upload_xhs_cookies
-将用户浏览器复制的 Cookie 注入到 xhs-mcp 并验证登录态。支持原始 Cookie 字符串（`name=val; name=val`）和 go-rod JSON 数组两种格式。
+将用户浏览器复制的原始 Cookie 字符串注入到 xhs-mcp 并验证登录态。这是当前公开 MCP 登录流程唯一保证兼容的输入方式。
 ```json
 {
   "cookies_data": "abRequestId=xxx; web_session=xxx; ..."
@@ -205,7 +205,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 ```
 
 ### ~~get_xhs_login_qrcode~~ / ~~xhs_login~~
-⛔ **禁止调用**。小红书会拦截 Docker 内无头浏览器，调用后只会返回失败或被检测的 QR 码。登录必须走 Cookie 注入流程（见「小红书登录流程」章节）。
+⛔ **禁止调用**。这些是遗留的内部辅助路径，不属于当前支持的公开登录流程。登录必须走 Cookie 注入流程（见「小红书登录流程」章节）。
 
 ### generate_ai_daily_ranking_cards
 为今日 AI 热点整榜生成榜单卡片。
