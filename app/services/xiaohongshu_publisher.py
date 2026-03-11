@@ -412,8 +412,8 @@ class XiaohongshuPublisher:
                 }
             return {
                 "success": True,
-                "logged_in": True,
-                "message": "登录状态检查成功",
+                "logged_in": False,
+                "message": "登录状态检查成功，但未获得明确的已登录信号",
             }
 
         return {
@@ -483,6 +483,24 @@ class XiaohongshuPublisher:
             }
             self._save_login_qrcode_meta(payload)
             return payload
+
+    async def _verify_authenticated_content_access(self) -> Dict[str, Any]:
+        result = await self._call_mcp("list_feeds", timeout=30.0)
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": result.get("error", "内容访问校验失败"),
+            }
+
+        mcp_result = result.get("result", {})
+        if mcp_result.get("isError"):
+            message, _ = self._extract_text_and_png(mcp_result.get("content"))
+            return {
+                "success": False,
+                "message": message or "内容访问校验失败",
+            }
+
+        return {"success": True, "message": "内容访问校验通过"}
 
     async def publish_content(
         self,
@@ -609,6 +627,15 @@ class XiaohongshuPublisher:
 
         # 检查登录状态
         login_result = await self.check_login_status()
+        if login_result.get("logged_in"):
+            probe_result = await self._verify_authenticated_content_access()
+            if not probe_result.get("success"):
+                return {
+                    "mcp_available": True,
+                    "login_status": False,
+                    "message": "登录状态疑似有效，但内容访问校验失败："
+                    + probe_result.get("message", "请重新扫码登录"),
+                }
 
         return {
             "mcp_available": True,
@@ -647,7 +674,7 @@ class XiaohongshuPublisher:
         ).resolve()
 
     @staticmethod
-    def _parse_raw_cookie_header(raw_header: str) -> list[dict]:
+    def _parse_raw_cookie_header(raw_header: str) -> list[dict[str, Any]]:
         """将浏览器原始 Cookie header 字符串转为 go-rod NetworkCookie 格式。
 
         输入格式: "name1=val1; name2=val2; ..."
