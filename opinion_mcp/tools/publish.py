@@ -114,6 +114,11 @@ async def get_xhs_login_qrcode() -> Dict[str, Any]:
     return await backend_client.get_xhs_login_qrcode()
 
 
+async def reset_xhs_login() -> Dict[str, Any]:
+    logger.info("[reset_xhs_login] 重置登录状态")
+    return await backend_client.reset_xhs_login()
+
+
 async def publish_to_xhs(
     job_id: str,
     title: Optional[str] = None,
@@ -398,16 +403,6 @@ async def check_xhs_status() -> Dict[str, Any]:
 
 
 async def xhs_login() -> Dict[str, Any]:
-    """统一小红书登录入口。
-
-    自动选择最佳登录方式：
-    1. 先检查是否已登录，若已登录直接返回
-    2. 尝试 xhs-mcp 原生 QR 登录 (v1, go-rod stealth)
-    3. 若 v1 失败，回退到 Playwright 代理 (v2)
-
-    Returns:
-        包含 QR 码 URL 和轮询信息的字典
-    """
     logger.info("[xhs_login] 统一登录流程")
 
     # 1. 检查当前状态
@@ -419,36 +414,28 @@ async def xhs_login() -> Dict[str, Any]:
             "message": status.get("message", "已登录，无需扫码"),
         }
 
-    # 2. 尝试 v1 (xhs-mcp native)
-    v1_result = await backend_client.get_xhs_login_qrcode()
-    if v1_result.get("success") and v1_result.get("qr_image_url"):
+    login_result = await backend_client.get_xhs_login_qrcode()
+    if login_result.get("success") and (
+        login_result.get("qr_image_url")
+        or login_result.get("qr_image_route")
+        or login_result.get("qr_image_path")
+    ):
         return {
-            **v1_result,
+            **login_result,
             "login_method": "xhs-mcp",
-            "poll_hint": "xhs-mcp 原生登录会在扫码后自动保存 cookies，无需额外轮询。扫码后调用 check_xhs_status 确认登录状态。",
+            "poll_hint": "请在小红书 App 扫码后重新调用 check_xhs_status 确认登录状态；若客户端不显示图片，请打开 qr_image_url、qr_image_route 或 qr_image_path。",
         }
 
-    # 3. v1 返回已登录（无 QR）
-    if v1_result.get("already_logged_in"):
+    if login_result.get("already_logged_in"):
         return {
             "success": True,
             "already_logged_in": True,
-            "message": v1_result.get("message", "已登录"),
-        }
-
-    # 4. 回退到 v2 (Playwright)
-    logger.info("[xhs_login] v1 失败，回退到 Playwright 代理")
-    v2_result = await backend_client.get_xhs_login_qrcode_v2()
-    if v2_result.get("success"):
-        return {
-            **v2_result,
-            "login_method": "playwright",
-            "poll_hint": "请调用 poll_xhs_login_v2(session_id) 轮询登录状态。",
+            "message": login_result.get("message", "已登录"),
         }
 
     return {
         "success": False,
-        "message": f"所有登录方式均失败。v1: {v1_result.get('message')}; v2: {v2_result.get('message')}",
+        "message": login_result.get("message", "获取登录二维码失败"),
     }
 
 
@@ -500,6 +487,7 @@ __all__ = [
     "check_xhs_status",
     "xhs_login",
     "get_xhs_login_qrcode",
+    "reset_xhs_login",
     "upload_xhs_cookies",
     "get_xhs_login_qrcode_v2",
     "poll_xhs_login_v2",

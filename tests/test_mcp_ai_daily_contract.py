@@ -11,6 +11,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SERVER_PATH = ROOT / "opinion_mcp" / "server.py"
 AI_DAILY_PATH = ROOT / "opinion_mcp" / "tools" / "ai_daily.py"
+APP_CONFIG_PATH = ROOT / "app" / "config.py"
+MCP_CONFIG_PATH = ROOT / "opinion_mcp" / "config.py"
 
 
 def _load_ai_daily_module():
@@ -46,13 +48,24 @@ def _load_ai_daily_module():
     return module
 
 
-def test_upload_xhs_cookies_public_schema_uses_string_contract():
+def test_public_xhs_login_tools_follow_official_contract():
     server_source = SERVER_PATH.read_text(encoding="utf-8")
 
-    assert 'name="upload_xhs_cookies"' in server_source
-    assert '"cookies_data": {' in server_source
-    assert '"type": "string"' in server_source
-    assert '"type": ["array", "object", "string"]' not in server_source
+    assert 'name="check_xhs_status"' in server_source
+    assert 'name="get_xhs_login_qrcode"' in server_source
+    assert 'name="reset_xhs_login"' in server_source
+    assert 'name="upload_xhs_cookies"' not in server_source
+    assert 'name="get_xhs_login_qrcode_v2"' not in server_source
+
+
+def test_xhs_runtime_defaults_target_docker_sidecar():
+    app_config_source = APP_CONFIG_PATH.read_text(encoding="utf-8")
+    mcp_config_source = MCP_CONFIG_PATH.read_text(encoding="utf-8")
+
+    assert "http://xhs-mcp:18060/mcp" in app_config_source
+    assert "http://xhs-mcp:18060/mcp" in mcp_config_source
+    assert "http://localhost:18060/mcp" not in app_config_source
+    assert "http://127.0.0.1:18060/mcp" not in mcp_config_source
 
 
 @pytest.mark.asyncio

@@ -23,7 +23,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 | **M3** | **卡片生成后展示** | 调用卡片生成后，告知用户已生成哪些类型的卡片，并优先展示每张预览图的 `image_url`；若没有再回退到 `output_path` |
 | **M4** | **发布前必须确认** | 发布到小红书前必须获得用户明确确认 |
 | **M5** | **发布时优先复用现有卡片** | 如果用户已经生成过卡片，发布时沿用同一话题和卡片类型，避免重复生成 |
-| **M6** | **未登录时引导 Cookie 注入** | 若发布链路提示未登录，先调用 `check_xhs_status` 确认，再按「小红书登录流程」章节引导用户从浏览器复制 Cookie 并注入 |
+| **M6** | **未登录时引导官方二维码登录** | 若发布链路提示未登录，先调用 `check_xhs_status` 确认，再按「小红书登录流程」章节引导用户获取二维码并扫码 |
 
 ### 🔴 MUST NOT DO
 
@@ -32,38 +32,27 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 | **N0** | **不要每次都 force_refresh** | 采集需要请求多个外部站点，频繁刷新会被限流 |
 | **N1** | **不要跳过展示步骤** | 不能拿到日报后不展示就直接分析 |
 | **N2** | **不要自动发布** | 不能未经用户确认就发布到任何平台 |
-| **N3** | **禁止调用 `xhs_login` 或 `get_xhs_login_qrcode` 来登录** | 这些是遗留的内部辅助路径，不属于当前支持的公开登录流程。未登录时必须走 Cookie 注入流程（见下方章节） |
+| **N3** | **不要再引导 Cookie 注入作为默认登录方式** | 当前支持的公开登录流程以 `check_xhs_status` + `get_xhs_login_qrcode` 为主，不要继续把 Cookie 注入写成默认操作 |
 
 ---
 
 ## � 小红书登录流程
 
-小红书会检测无头浏览器并拒绝登录，因此不依赖 Docker 内的 QR 码扫码登录，而是由用户在自己的真实浏览器中提取 Cookie，Agent 再注入到后端。
+当前支持的公开登录流程以官方二维码登录为主；对于无法直接显示图片的客户端，需要把二维码 URL / route / file path 告知用户手动打开。
 
 ### 流程
 
 1. **检查状态** — 调用 `check_xhs_status`，若已登录则跳过
-2. **引导用户提取 Cookie** — 用以下话术（原样发送）：
-
-```
-请在电脑浏览器中按以下步骤操作：
-
-1️⃣ 打开 https://www.xiaohongshu.com 并确保已登录
-2️⃣ 按 F12 打开开发者工具 → 切到 Network（网络）面板
-3️⃣ 刷新页面，在请求列表中点击第一个 `explore` 请求
-4️⃣ 在右侧 Headers 中找到 Request Headers → Cookie
-5️⃣ 复制完整的 Cookie 值（一长串 key=value; key=value... 的文本）
-6️⃣ 把复制的内容发给我
-```
-
-3. **注入 Cookie** — 用户发来 Cookie 文本后，调用 `upload_xhs_cookies`，参数 `cookies_data` 传入用户提供的原始字符串
-4. **确认结果** — 检查返回的 `login_verified` 字段，若为 `true` 则告知用户登录成功
-5. **失败处理** — 若 `login_verified` 为 `false`，提示用户确认是否已在浏览器中登录小红书，然后重新复制 Cookie 重试
+2. **获取二维码** — 调用 `get_xhs_login_qrcode`
+3. **展示二维码**
+   - 若客户端能直接显示图片，则提示用户用小红书 App 扫码
+   - 若客户端不能直接显示图片，则告知用户打开返回的 `qr_image_url`、`qr_image_route` 或 `qr_image_path`
+4. **确认结果** — 用户扫码后，再次调用 `check_xhs_status`；若已登录则告知用户登录成功
+5. **失败处理** — 若二维码超时或状态仍未登录，则重新调用 `get_xhs_login_qrcode`
 
 ### 注意事项
-- Cookie 有时效性，过期后需要重新注入
-- 让用户复制 **完整** 的 Cookie 值，不要遗漏
-- MCP `upload_xhs_cookies` 的公开输入契约是原始 Cookie 字符串；后端内部可能兼容其他格式，但不应作为公开用法指导用户
+- 二维码有时效性，过期后需要重新获取
+- 对于 OpenCode / Claude Code 等无法稳定显示图片的客户端，优先把可访问的二维码 URL 或文件路径返回给用户
 
 ---
 
@@ -136,7 +125,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 1. 如尚未生成卡片，调用 `generate_ai_daily_cards(topic_id, card_types)`
 2. 若返回了 `image_url`，优先把完整地址展示给用户；若没有再回退到 `output_path`
 3. 调用 `publish_ai_daily(topic_id, card_types)`
-4. 如果返回未登录，按「小红书登录流程」章节引导用户提取 Cookie 并注入，完成后再继续发布
+4. 如果返回未登录，按「小红书登录流程」章节引导用户获取二维码并扫码，完成后再继续发布
 5. 发布成功时返回结果与笔记链接
 
 ### 4. `/publish-today` — 将今天整榜做成小红书图文
@@ -148,7 +137,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 4. 发布时调用 `publish_ai_daily_ranking(limit, card_types)`
 5. 默认卡片使用 `["title", "daily-rank"]`
 6. 发布前必须再次确认
-7. 如果未登录，按「小红书登录流程」章节引导用户提取 Cookie 并注入
+7. 如果未登录，按「小红书登录流程」章节引导用户获取二维码并扫码
 
 ---
 
@@ -196,16 +185,13 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 {}
 ```
 
-### upload_xhs_cookies
-将用户浏览器复制的原始 Cookie 字符串注入到 xhs-mcp 并验证登录态。这是当前公开 MCP 登录流程唯一保证兼容的输入方式。
+### get_xhs_login_qrcode
+获取小红书登录二维码。
 ```json
-{
-  "cookies_data": "abRequestId=xxx; web_session=xxx; ..."
-}
+{}
 ```
 
-### ~~get_xhs_login_qrcode~~ / ~~xhs_login~~
-⛔ **禁止调用**。这些是遗留的内部辅助路径，不属于当前支持的公开登录流程。登录必须走 Cookie 注入流程（见「小红书登录流程」章节）。
+若客户端无法直接展示图片，必须优先把 `qr_image_url`、`qr_image_route` 或 `qr_image_path` 告知用户，让用户手动打开二维码后扫码。
 
 ### generate_ai_daily_ranking_cards
 为今日 AI 热点整榜生成榜单卡片。

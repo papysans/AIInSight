@@ -49,6 +49,7 @@ from opinion_mcp.tools import (
     get_xhs_login_qrcode,
     check_xhs_status,
     xhs_login,
+    reset_xhs_login,
     upload_xhs_cookies,
     get_xhs_login_qrcode_v2,
     poll_xhs_login_v2,
@@ -265,18 +266,14 @@ MCP_TOOLS: List[MCPTool] = [
         inputSchema=MCPToolInput(type="object", properties={}, required=[]),
     ),
     MCPTool(
-        name="upload_xhs_cookies",
-        description="小红书登录工具。公开 MCP 登录流程仅支持由用户在真实浏览器中复制原始 Cookie 字符串（DevTools → Network → 任意请求 → Request Headers → Cookie），再将其传入此工具完成注入和登录态验证。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "cookies_data": {
-                    "type": "string",
-                    "description": "用户从真实浏览器复制的原始 Cookie 字符串，格式如 'web_session=xxx; abRequestId=xxx; ...'。这是公开 MCP 接口唯一保证兼容的输入格式。",
-                }
-            },
-            required=["cookies_data"],
-        ),
+        name="get_xhs_login_qrcode",
+        description="获取小红书登录二维码。返回可供客户端展示或打开的二维码信息；扫码后请再次调用 check_xhs_status 确认登录状态。",
+        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
+    ),
+    MCPTool(
+        name="reset_xhs_login",
+        description="重置小红书登录状态。执行后需要重新扫码登录。",
+        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
     ),
     MCPTool(
         name="publish_to_xhs",
@@ -499,12 +496,13 @@ TOOL_HANDLERS = {
     "get_analysis_status": get_analysis_status,
     "get_analysis_result": get_analysis_result,
     "update_copywriting": update_copywriting,
-    "get_xhs_login_qrcode": get_xhs_login_qrcode,  # kept for direct API use only, not in TOOLS list
+    "get_xhs_login_qrcode": get_xhs_login_qrcode,
     "check_xhs_status": check_xhs_status,
-    "xhs_login": xhs_login,  # kept for direct API use only, not in TOOLS list
+    "xhs_login": xhs_login,
+    "reset_xhs_login": reset_xhs_login,
     "upload_xhs_cookies": upload_xhs_cookies,
-    "get_xhs_login_qrcode_v2": get_xhs_login_qrcode_v2,  # kept for direct API use only, not in TOOLS list
-    "poll_xhs_login_v2": poll_xhs_login_v2,  # kept for direct API use only, not in TOOLS list
+    "get_xhs_login_qrcode_v2": get_xhs_login_qrcode_v2,
+    "poll_xhs_login_v2": poll_xhs_login_v2,
     "publish_to_xhs": publish_to_xhs,
     "get_settings": get_settings,
     "register_webhook": register_webhook,
