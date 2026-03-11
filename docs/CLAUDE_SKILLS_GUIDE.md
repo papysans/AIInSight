@@ -32,7 +32,7 @@
 ### 2.1 `ai-insight`
 
 文件位置：
-[`SKILL.md`](/Volumes/Work/Projects/AIInSight/.claude/skills/ai-insight/SKILL.md)
+[`SKILL.md`](/Volumes/Work/Projects/AIInSight/.agents/skills/ai-insight/SKILL.md)
 
 定位：
 
@@ -54,7 +54,7 @@
 ### 2.2 `ai-topic-analyzer`
 
 文件位置：
-[`SKILL.md`](/Volumes/Work/Projects/AIInSight/.claude/skills/ai-topic-analyzer/SKILL.md)
+[`SKILL.md`](/Volumes/Work/Projects/AIInSight/.agents/skills/ai-topic-analyzer/SKILL.md)
 
 定位：
 
@@ -260,7 +260,7 @@
 
 预期系统行为：
 
-1. Claude 命中 `opinion-analyzer`
+1. Claude 命中 `ai-topic-analyzer`
 2. 询问平台、图片数量、辩论轮次
 3. 若用户回复 `默认`，使用默认配置
 4. 调用 `analyze_topic`
@@ -289,7 +289,7 @@
 
 ## 5. 当前 MCP 工具一览
 
-项目当前通过 `opinion-analyzer` MCP 对 Claude 暴露两大类工具。
+项目当前通过 AIInSight MCP 工具集对 Claude 暴露两大类能力。
 
 ### 5.1 AI 日报相关工具
 
@@ -452,7 +452,7 @@
 - 发布前必须明确确认
 - 如果已经生成过卡片，发布时优先复用，不重复生成
 
-### 8.2 `opinion-analyzer` 的行为约束
+### 8.2 `ai-topic-analyzer` 的行为约束
 
 - 启动分析前，先确认平台、图片数量、辩论轮次
 - `analyze_topic` 成功后，必须持续轮询 `get_analysis_status`
@@ -566,7 +566,7 @@
 当前项目已经具备两类核心 skill：
 
 - `ai-insight`：把“今日 AI 榜单”和“单条 AI 热点”变成可分析、可出图、可发布的小红书内容
-- `opinion-analyzer`：把“任意热点话题”变成可辩论、可解释、可发布的小红书内容
+- `ai-topic-analyzer`：把“任意 AI 话题”变成可分析、可解释、可发布的小红书内容
 
 当前渲染器共支持 6 种 card：
 
