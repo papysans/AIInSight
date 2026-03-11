@@ -22,6 +22,28 @@ async def test_check_login_status_requires_explicit_logged_in_signal(
 
 
 @pytest.mark.asyncio
+async def test_get_login_qrcode_uses_relaxed_default_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+):
+    monkeypatch.delenv("XHS_LOGIN_QRCODE_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("XHS_LOGIN_QRCODE_DIR", str(tmp_path))
+    publisher = XiaohongshuPublisher("http://example.test/mcp")
+    captured: dict[str, float] = {}
+
+    async def fake_call_mcp(tool_name: str, arguments=None, timeout: float = 60.0):
+        assert tool_name == "get_login_qrcode"
+        captured["timeout"] = timeout
+        return {"success": False, "error": "请求超时，请稍后重试"}
+
+    monkeypatch.setattr(publisher, "_call_mcp", fake_call_mcp)
+
+    result = await publisher.get_login_qrcode()
+
+    assert captured["timeout"] == 60.0
+    assert result == {"success": False, "message": "请求超时，请稍后重试"}
+
+
+@pytest.mark.asyncio
 async def test_get_status_requires_authenticated_content_probe(
     monkeypatch: pytest.MonkeyPatch,
 ):

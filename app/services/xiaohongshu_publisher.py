@@ -128,11 +128,11 @@ class XiaohongshuPublisher:
             return None
 
     def _get_login_qrcode_timeout(self) -> float:
-        raw = os.getenv("XHS_LOGIN_QRCODE_TIMEOUT_SECONDS", "30").strip()
+        raw = os.getenv("XHS_LOGIN_QRCODE_TIMEOUT_SECONDS", "60").strip()
         try:
             timeout = float(raw)
         except ValueError:
-            timeout = 30.0
+            timeout = 60.0
         return max(5.0, timeout)
 
     def _load_cached_login_qrcode(self) -> Optional[Dict[str, Any]]:
