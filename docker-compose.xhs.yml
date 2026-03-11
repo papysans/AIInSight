@@ -21,7 +21,7 @@ services:
     environment:
       - XHS_MCP_URL=http://xhs-mcp:18060/mcp
       - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:8000}
-      - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-30}
+      - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-60}
       - TZ=${TZ:-Asia/Shanghai}
       - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
       - XHS_COOKIES_PATH=runtime/xhs/data/cookies.json

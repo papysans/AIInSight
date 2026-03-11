@@ -13,6 +13,9 @@ SERVER_PATH = ROOT / "opinion_mcp" / "server.py"
 AI_DAILY_PATH = ROOT / "opinion_mcp" / "tools" / "ai_daily.py"
 APP_CONFIG_PATH = ROOT / "app" / "config.py"
 MCP_CONFIG_PATH = ROOT / "opinion_mcp" / "config.py"
+DOCKER_COMPOSE_PATH = ROOT / "docker-compose.yml"
+DOCKER_COMPOSE_XHS_PATH = ROOT / "docker-compose.xhs.yml"
+ENV_EXAMPLE_PATH = ROOT / ".env.example"
 
 
 def _load_ai_daily_module():
@@ -74,6 +77,22 @@ def test_xhs_runtime_defaults_target_docker_sidecar():
     assert "http://xhs-mcp:18060/mcp" in mcp_config_source
     assert "http://localhost:18060/mcp" not in app_config_source
     assert "http://127.0.0.1:18060/mcp" not in mcp_config_source
+
+
+def test_xhs_qrcode_timeout_default_is_relaxed_across_runtime_configs():
+    compose_source = DOCKER_COMPOSE_PATH.read_text(encoding="utf-8")
+    compose_xhs_source = DOCKER_COMPOSE_XHS_PATH.read_text(encoding="utf-8")
+    env_example_source = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-60}"
+        in compose_source
+    )
+    assert (
+        "XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-60}"
+        in compose_xhs_source
+    )
+    assert "XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=60" in env_example_source
 
 
 @pytest.mark.asyncio
