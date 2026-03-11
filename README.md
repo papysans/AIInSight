@@ -140,6 +140,32 @@ curl http://localhost:3001/healthz
 docker compose down
 ```
 
+#### 6. 首次在 OpenCode 中接入 MCP
+
+如果你只是在本地把 AIInSight 服务跑起来，**到这一步已经够了**；`mcp` 服务会随 Docker 一起启动，并暴露在：
+
+- `http://localhost:18061/health`
+- `http://localhost:18061/mcp`
+
+但如果你希望 **OpenCode 首次就能直接调用 `aiinsight-mcp`**，还需要在 OpenCode 客户端侧手动添加这个 MCP 服务。
+
+推荐接入目标：
+
+- MCP 名称：`aiinsight-mcp`
+- MCP URL：`http://localhost:18061/mcp`
+
+接入前建议先验证：
+
+```bash
+curl http://localhost:18061/health
+curl http://localhost:18061/mcp
+```
+
+说明：
+
+- `18061` 是 AIInSight 自己暴露给 OpenCode / Claude Code 一类客户端使用的 MCP 服务
+- `18060` 是内部 `xhs-mcp` sidecar，默认给 `api` / `mcp` 容器走小红书链路使用，**不是首次在 OpenCode 中注册的目标地址**
+
 #### Docker 部署说明
 
 - 使用默认 `docker-compose.yml` 时，`api` / `mcp` 会自动通过容器网络访问 `http://xhs-mcp:18060/mcp`
