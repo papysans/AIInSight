@@ -42,7 +42,7 @@ docker compose logs --tail=60 mcp
 | **M3** | **卡片生成后展示** | 调用卡片生成后，告知用户已生成哪些类型的卡片，并优先展示每张预览图的 `image_url`；若没有再回退到 `output_path` |
 | **M4** | **发布前必须确认** | 发布到小红书前必须获得用户明确确认 |
 | **M5** | **发布时优先复用现有卡片** | 如果用户已经生成过卡片，发布时沿用同一话题和卡片类型，避免重复生成 |
-| **M6** | **未登录时引导官方二维码登录** | 若发布链路提示未登录，先调用 `check_xhs_status` 确认，再按「小红书登录流程」章节引导用户获取二维码并扫码 |
+| **M6** | **发布前先检查登录，扫码后立即发布** | 发布流程开始时先调用 `check_xhs_status`；若未登录则立即获取二维码让用户扫码；扫码后**立刻执行发布**，不要在扫码和发布之间插入任何等待步骤（登录态仅在内存中，延迟会丢失） |
 | **M7** | **Docker-first 排障优先看 mcp 日志** | 如果用户反馈 18061 不通或发布链路异常，优先检查 `docker compose logs --tail=60 mcp`，确认 MCP Server 是否真正完成启动 |
 
 ### 🔴 MUST NOT DO
@@ -58,22 +58,32 @@ docker compose logs --tail=60 mcp
 
 ## � 小红书登录流程
 
-当前支持的公开登录流程以官方二维码登录为主；对于无法直接显示图片的客户端，需要把二维码 URL / route / file path 告知用户手动打开。
+当前支持的公开登录流程以官方二维码登录为主。**登录态不稳定**（xhs-mcp 扫码后 cookies 不一定落盘），所以**必须在发布前紧挨着做登录检查，扫码后立即发布，中间不要有等待或容器重启**。
+
+### ⚡ 核心原则：登录 → 立即发布，不能断开
+
+xhs-mcp 的 QR 扫码登录态只保存在 headless browser 内存中，不会自动持久化到 cookies.json。这意味着：
+- 扫码成功后，browser session 是活的，可以立即发布
+- 但如果中间有任何延迟（用户犹豫、容器重启、session 超时），登录态就丢了
+- **所以：在发布流程里，先检查登录 → 如果需要扫码就立刻扫 → 扫完立刻发布，一气呵成**
 
 ### 流程
 
 1. **检查状态** — 调用 `check_xhs_status`，若已登录则跳过
 2. **获取二维码** — 调用 `get_xhs_login_qrcode`
-3. **展示二维码**
-   - 若客户端能直接显示图片，则提示用户用小红书 App 扫码
-   - 若客户端不能直接显示图片，则告知用户打开返回的 `qr_image_url`、`qr_image_route` 或 `qr_image_path`
-4. **确认结果** — 用户扫码后，再次调用 `check_xhs_status`；若已登录则告知用户登录成功
-5. **失败处理** — 若二维码超时或状态仍未登录，则重新调用 `get_xhs_login_qrcode`
+3. **展示二维码**（按优先级）
+   - **终端 ASCII QR 码**：响应中的 `qr_ascii` 字段包含 Unicode 半块字符二维码，CLI 用户可直接用手机对准终端扫描
+   - **浏览器预览页**：`qr_preview_url`（如 `http://localhost:8000/api/xhs/login-qrcode/preview`）— 带倒计时的 HTML 页面
+   - **图片直链**：`qr_image_url` — 浏览器打开直接显示 PNG
+   - **本地文件**：`qr_image_path` — 宿主机可 `open` 打开
+4. **用户扫码后立即行动** — 不要等用户说"扫好了"再去 check_xhs_status 然后再发布。**应该直接调用发布接口**，因为 publish 内部会再次检查登录态
+5. **失败处理** — 若二维码超时或发布仍返回未登录，则重新获取二维码并重复
 
 ### 注意事项
-- 二维码有时效性，过期后需要重新获取
-- 对于 OpenCode / Claude Code 等无法稳定显示图片的客户端，优先把可访问的二维码 URL 或文件路径返回给用户
-- 如果 `mcp` 容器日志出现 `ImportError: cannot import name 'reset_xhs_login' from 'opinion_mcp.tools'`，说明镜像需要重新 `--build`，而不是继续重试调用工具
+- 二维码有效期约 4 分钟，过期后需要重新获取
+- 对于 OpenCode / Claude Code 等 CLI 客户端，**优先展示 `qr_ascii`（终端直接扫码）和 `qr_preview_url`（浏览器预览页）**
+- 如果 `mcp` 容器日志出现 `ImportError`，说明镜像需要重新 `--build`
+- **不要在扫码和发布之间插入不必要的等待步骤**
 
 ---
 
@@ -142,23 +152,29 @@ docker compose logs --tail=60 mcp
 请确认是否继续发布。回复“确认发布”后我再执行。
 ```
 
-确认后：
-1. 如尚未生成卡片，调用 `generate_ai_daily_cards(topic_id, card_types)`
-2. 若返回了 `image_url`，优先把完整地址展示给用户；若没有再回退到 `output_path`
-3. 调用 `publish_ai_daily(topic_id, card_types)`
-4. 如果返回未登录，按「小红书登录流程」章节引导用户获取二维码并扫码，完成后再继续发布
-5. 发布成功时返回结果与笔记链接
+确认后（**登录检查前置，卡片生成和发布紧挨**）：
+1. **先检查登录** — 调用 `check_xhs_status`
+2. **未登录则立即引导扫码** — 调用 `get_xhs_login_qrcode`，展示 ASCII QR / 预览页 / 图片链接，等用户扫码
+3. **用户扫码后立即执行后续步骤，不要再单独 check_xhs_status**
+4. 如尚未生成卡片，调用 `generate_ai_daily_cards(topic_id, card_types)`
+5. 若返回了 `image_url`，优先展示给用户
+6. **立即调用** `publish_ai_daily(topic_id, card_types)` — 不能有间隔
+7. 发布成功时返回结果与笔记链接
+8. 若发布仍返回未登录，重新获取二维码并重复步骤 2-7
 
 ### 4. `/publish-today` — 将今天整榜做成小红书图文
 
 当用户要求“把今天的榜单做成小红书图文”或“把今日榜单发布到小红书”时：
 1. 先确认是“先生成预览”还是“直接发布”
-2. 生成预览时调用 `generate_ai_daily_ranking_cards(limit, card_types)`
-3. 若返回了 `image_url`，必须优先把每张榜单卡片的完整访问地址展示给用户；若没有再回退到 `output_path`
-4. 发布时调用 `publish_ai_daily_ranking(limit, card_types)`
-5. 默认卡片使用 `["title", "daily-rank"]`
-6. 发布前必须再次确认
-7. 如果未登录，按「小红书登录流程」章节引导用户获取二维码并扫码
+2. **先检查登录** — 调用 `check_xhs_status`
+3. **未登录则立即引导扫码** — 调用 `get_xhs_login_qrcode`，展示 ASCII QR / 预览页，等用户扫码
+4. **用户扫码后不要再单独 check，直接往下走**
+5. 生成预览时调用 `generate_ai_daily_ranking_cards(limit, card_types)`
+6. 若返回了 `image_url`，必须优先把每张榜单卡片的完整访问地址展示给用户
+7. **立即调用** `publish_ai_daily_ranking(limit, card_types)` — 不能有间隔
+8. 默认卡片使用 `["title", "daily-rank"]`
+9. 发布前必须再次确认
+10. 若发布仍返回未登录，重新获取二维码并重复步骤 3-7
 
 ---
 
@@ -212,7 +228,13 @@ docker compose logs --tail=60 mcp
 {}
 ```
 
-若客户端无法直接展示图片，必须优先把 `qr_image_url`、`qr_image_route` 或 `qr_image_path` 告知用户，让用户手动打开二维码后扫码。
+响应包含多种展示方式：
+- `qr_ascii` — 终端 ASCII 二维码（CLI 用户直接对准手机扫描）
+- `qr_preview_url` — 浏览器预览页 URL（带倒计时）
+- `qr_image_url` — PNG 图片直链
+- `qr_image_path` — 宿主机本地文件路径
+
+**优先展示 `qr_ascii` 和 `qr_preview_url`**，适配 CLI 客户端无法渲染图片的场景。
 
 ### generate_ai_daily_ranking_cards
 为今日 AI 热点整榜生成榜单卡片。
