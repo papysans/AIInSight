@@ -165,9 +165,37 @@ python -m opinion_mcp.server --host 0.0.0.0 --port 18061
 
 AIInSight 当前支持的 XHS 发布链路是 **Docker sidecar 主链路**：`api` / `mcp` 通过容器网络访问 `http://xhs-mcp:18060/mcp`。
 
+#### main 分支推荐启动方式
+
+在仓库根目录、`main` 分支下，默认应把以下 **4 个容器** 一起拉起：
+
+- `api` → `8000`
+- `mcp` → `18061`
+- `renderer` → `3001`
+- `xhs-mcp` → `18060`
+
+推荐命令：
+
+```bash
+docker compose up -d --build api mcp renderer xhs-mcp
+```
+
+启动后建议立刻检查：
+
+```bash
+docker compose ps
+docker compose logs --tail=60 mcp
+```
+
+若 `mcp` 正常启动，日志里应能看到类似：
+
+- `AIInSight MCP Server 启动`
+- `服务地址: http://0.0.0.0:18061`
+- `MCP 端点: http://0.0.0.0:18061/mcp`
+
 推荐做法：
 
-1. 直接运行 `docker compose up -d`
+1. 优先运行 `docker compose up -d --build api mcp renderer xhs-mcp`
 2. 使用 `GET /api/xhs/status` 或 `validate_publish` 检查 `xhs-mcp` sidecar 可用性和登录状态
 3. 若未登录，调用 `/api/xhs/login-qrcode` 或 MCP `get_xhs_login_qrcode`
 4. 如果客户端不能直接显示二维码，打开返回的 `qr_image_url`、`qr_image_route` 或 `qr_image_path`
@@ -183,6 +211,18 @@ AIInSight 当前支持的 XHS 发布链路是 **Docker sidecar 主链路**：`ap
 - `XHS_LOGIN_QRCODE_PUBLIC_BASE_URL` 可用于覆盖登录二维码的对外访问前缀，适合远程访问或反向代理
 - 仓库里如果仍保留 cookie 上传或 Playwright 登录代理脚本，应视为迁移/内部排障能力，而不是当前支持的公开登录流程
 
+常见排障：
+
+- 如果 `api` 启动时报 `Bind for 0.0.0.0:8000 failed: port is already allocated`，通常是旧 worktree / 旧项目容器还占着 `8000`
+- 可先用 `docker ps --format "table {{.Names}}\t{{.Ports}}"` 找到旧的 `*-api-1` / `*-mcp-1` / `*-renderer-1` 容器并停止，再重新执行四容器启动命令
+- 如果 `mcp` 容器反复退出，优先检查：
+
+```bash
+docker compose logs --tail=80 mcp
+```
+
+- 若日志出现 `ImportError: cannot import name 'reset_xhs_login' from 'opinion_mcp.tools'` 一类错误，说明当前镜像没有带上最新代码，需要重新 `--build`
+
 Apple Silicon 额外说明：
 
 - 上游 `xpzouying/xiaohongshu-mcp:latest-arm64` 当前我实测会因为浏览器自动下载失败而直接返回 `500`
@@ -195,7 +235,7 @@ XHS_MCP_IMAGE=aiinsight-xhs-mcp:arm64-patched \
 XHS_MCP_PLATFORM=linux/arm64 \
 XHS_MCP_BROWSER_BIN=/usr/bin/chromium \
 XHS_MCP_SOURCE_TIMEZONE=Asia/Shanghai \
-docker compose up -d --force-recreate xhs-mcp api mcp
+docker compose up -d --force-recreate api mcp renderer xhs-mcp
 ```
 
 ## 主要接口

@@ -9,6 +9,25 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 
 从 AIbase、机器之心、量子位、GitHub Trending、Hugging Face Papers、TechCrunch、Hacker News、Reddit 等数据源自动采集 AI 领域热点新闻，经评分聚合后生成结构化日报，并支持深度分析与卡片生成。
 
+## 🐳 Docker 运行前置检查
+
+如果当前任务涉及小红书发布、二维码登录、`check_xhs_status`、`publish_ai_daily`、`publish_ai_daily_ranking`，默认先假设 AIInSight 运行在 **main 分支四容器栈** 上：
+
+- `api` (`8000`)
+- `mcp` (`18061`)
+- `renderer` (`3001`)
+- `xhs-mcp` (`18060`)
+
+优先建议或执行：
+
+```bash
+docker compose up -d --build api mcp renderer xhs-mcp
+docker compose ps
+docker compose logs --tail=60 mcp
+```
+
+如果 `api` 报 `8000` 端口被占，优先排查旧 worktree 项目的残留容器；如果 `mcp` 不通，优先看 `mcp` 日志而不是只盯 `xhs-mcp`。
+
 ---
 
 ## ⚠️ 关键行为规则
@@ -24,6 +43,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 | **M4** | **发布前必须确认** | 发布到小红书前必须获得用户明确确认 |
 | **M5** | **发布时优先复用现有卡片** | 如果用户已经生成过卡片，发布时沿用同一话题和卡片类型，避免重复生成 |
 | **M6** | **未登录时引导官方二维码登录** | 若发布链路提示未登录，先调用 `check_xhs_status` 确认，再按「小红书登录流程」章节引导用户获取二维码并扫码 |
+| **M7** | **Docker-first 排障优先看 mcp 日志** | 如果用户反馈 18061 不通或发布链路异常，优先检查 `docker compose logs --tail=60 mcp`，确认 MCP Server 是否真正完成启动 |
 
 ### 🔴 MUST NOT DO
 
@@ -53,6 +73,7 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 ### 注意事项
 - 二维码有时效性，过期后需要重新获取
 - 对于 OpenCode / Claude Code 等无法稳定显示图片的客户端，优先把可访问的二维码 URL 或文件路径返回给用户
+- 如果 `mcp` 容器日志出现 `ImportError: cannot import name 'reset_xhs_login' from 'opinion_mcp.tools'`，说明镜像需要重新 `--build`，而不是继续重试调用工具
 
 ---
 

@@ -58,6 +58,14 @@ def test_public_xhs_login_tools_follow_official_contract():
     assert 'name="get_xhs_login_qrcode_v2"' not in server_source
 
 
+def test_tools_package_exports_reset_xhs_login_for_server_import():
+    tools_source = (ROOT / "opinion_mcp" / "tools" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "reset_xhs_login" in tools_source
+
+
 def test_xhs_runtime_defaults_target_docker_sidecar():
     app_config_source = APP_CONFIG_PATH.read_text(encoding="utf-8")
     mcp_config_source = MCP_CONFIG_PATH.read_text(encoding="utf-8")
