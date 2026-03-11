@@ -22,7 +22,7 @@ from loguru import logger
 def _process_image(image: str) -> str:
     """
     处理图片路径/URL/Base64 数据
-    
+
     - 如果是 Base64 data URL，保存到两容器共享卷并返回 xhs-mcp 侧路径
     - 如果是普通 URL 或本地路径，直接返回
     """
@@ -40,7 +40,7 @@ def _process_image(image: str) -> str:
                 ext = "gif"
             elif "image/webp" in header:
                 ext = "webp"
-            
+
             # Decode and save to shared volume so xhs-mcp can read it
             image_data = base64.b64decode(data)
             filename = f"xhs_upload_{id(image_data)}_{int(os.times().elapsed * 1000) % 1000000}.{ext}"
@@ -54,14 +54,20 @@ def _process_image(image: str) -> str:
                 mcp_path = os.path.join(mcp_dir, filename)
                 with open(api_path, "wb") as f:
                     f.write(image_data)
-                logger.info(f"[XHS] Saved image to shared vol: {api_path} → mcp sees: {mcp_path}")
+                logger.info(
+                    f"[XHS] Saved image to shared vol: {api_path} → mcp sees: {mcp_path}"
+                )
                 return mcp_path
             else:
                 # Fallback: local /tmp (only works outside Docker)
-                temp_path = os.path.join(tempfile.gettempdir(), f"xhs_upload_{id(image)}.{ext}")
+                temp_path = os.path.join(
+                    tempfile.gettempdir(), f"xhs_upload_{id(image)}.{ext}"
+                )
                 with open(temp_path, "wb") as f:
                     f.write(image_data)
-                logger.warning(f"[XHS] XHS_IMAGE_API_DIR not set, saved to tmp (won't work cross-container): {temp_path}")
+                logger.warning(
+                    f"[XHS] XHS_IMAGE_API_DIR not set, saved to tmp (won't work cross-container): {temp_path}"
+                )
                 return temp_path
         except Exception as e:
             logger.error(f"[XHS] Failed to process Base64 image: {e}")
@@ -75,7 +81,7 @@ class XiaohongshuPublisher:
     def __init__(self, mcp_url: Optional[str] = None):
         # Resolve the MCP endpoint at instantiation time so compose/env overrides
         # such as the Docker sidecar URL are honored by the shared singleton.
-        self.mcp_url = mcp_url or os.getenv("XHS_MCP_URL", "http://localhost:18060/mcp")
+        self.mcp_url = mcp_url or os.getenv("XHS_MCP_URL", "http://xhs-mcp:18060/mcp")
         self._request_id = 0
         self._login_qrcode_lock = asyncio.Lock()
 
@@ -149,7 +155,11 @@ class XiaohongshuPublisher:
                 qr_file = candidate
 
         if qr_file is None:
-            candidates = sorted(output_dir.glob("xhs-login-qrcode-*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+            candidates = sorted(
+                output_dir.glob("xhs-login-qrcode-*.png"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
             if candidates:
                 candidate = candidates[0].resolve()
                 if candidate.parent == output_dir and candidate.is_file():
@@ -218,8 +228,12 @@ class XiaohongshuPublisher:
 
         try:
             dt = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-            source_dt = dt.replace(tzinfo=XiaohongshuPublisher._get_mcp_source_timezone())
-            return source_dt.astimezone(XiaohongshuPublisher._get_app_timezone()).isoformat()
+            source_dt = dt.replace(
+                tzinfo=XiaohongshuPublisher._get_mcp_source_timezone()
+            )
+            return source_dt.astimezone(
+                XiaohongshuPublisher._get_app_timezone()
+            ).isoformat()
         except ValueError:
             return None
 
@@ -248,7 +262,7 @@ class XiaohongshuPublisher:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "xiaohongshu-client", "version": "1.0"}
+                "clientInfo": {"name": "xiaohongshu-client", "version": "1.0"},
             },
             "id": init_id,
         }
@@ -257,7 +271,7 @@ class XiaohongshuPublisher:
         initialized_req = {
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
-            "params": {}
+            "params": {},
         }
 
         # 3. Tool Call Request
@@ -275,7 +289,9 @@ class XiaohongshuPublisher:
         # Batch Payload
         payload = [init_req, initialized_req, call_req]
 
-        logger.info(f"[XHS MCP] Calling tool: {tool_name}, batch_mode=True, call_id: {call_id}")
+        logger.info(
+            f"[XHS MCP] Calling tool: {tool_name}, batch_mode=True, call_id: {call_id}"
+        )
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -288,7 +304,10 @@ class XiaohongshuPublisher:
                 results = response.json()
 
                 if not isinstance(results, list):
-                    return {"success": False, "error": f"Invalid batch response type: {type(results)}"}
+                    return {
+                        "success": False,
+                        "error": f"Invalid batch response type: {type(results)}",
+                    }
 
                 # Find the result for our tool call
                 tool_result = None
@@ -296,17 +315,22 @@ class XiaohongshuPublisher:
                     if res.get("id") == call_id:
                         tool_result = res
                         break
-                
+
                 if not tool_result:
                     # Check for initialize errors
                     for res in results:
                         if "error" in res:
-                            logger.error(f"[XHS MCP] Batch error (id={res.get('id')}): {res['error']}")
+                            logger.error(
+                                f"[XHS MCP] Batch error (id={res.get('id')}): {res['error']}"
+                            )
                             return {
-                                "success": False, 
-                                "error": f"MCP Error: {res['error'].get('message', res['error'])}"
+                                "success": False,
+                                "error": f"MCP Error: {res['error'].get('message', res['error'])}",
                             }
-                    return {"success": False, "error": "Tool call response not found in batch"}
+                    return {
+                        "success": False,
+                        "error": "Tool call response not found in batch",
+                    }
 
                 if "error" in tool_result:
                     error = tool_result["error"]
@@ -347,7 +371,7 @@ class XiaohongshuPublisher:
                     "params": {
                         "protocolVersion": "2024-11-05",
                         "capabilities": {},
-                        "clientInfo": {"name": "health-check", "version": "1.0"}
+                        "clientInfo": {"name": "health-check", "version": "1.0"},
                     },
                     "id": request_id,
                 }
@@ -416,7 +440,9 @@ class XiaohongshuPublisher:
                 logger.info("[XHS MCP] Reusing cached login QR code after lock")
                 return cached
 
-            result = await self._call_mcp("get_login_qrcode", timeout=self._get_login_qrcode_timeout())
+            result = await self._call_mcp(
+                "get_login_qrcode", timeout=self._get_login_qrcode_timeout()
+            )
 
             if not result.get("success"):
                 return {
@@ -442,7 +468,9 @@ class XiaohongshuPublisher:
                 }
 
             output_dir = self._get_login_qrcode_dir()
-            filename = f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+            filename = (
+                f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+            )
             output_path = output_dir / filename
             output_path.write_bytes(base64.b64decode(image_b64))
 
@@ -513,13 +541,15 @@ class XiaohongshuPublisher:
 
         # Process images: convert Base64 data URLs to temp files
         processed_images = [_process_image(img) for img in images]
-        
+
         # Process tags: remove # prefix if present (MCP will add it)
         processed_tags = []
         if tags:
-            processed_tags = [tag.lstrip('#') for tag in tags if tag]
-        
-        logger.info(f"[XHS MCP] Publishing: title='{title[:30]}...', images={len(processed_images)}")
+            processed_tags = [tag.lstrip("#") for tag in tags if tag]
+
+        logger.info(
+            f"[XHS MCP] Publishing: title='{title[:30]}...', images={len(processed_images)}"
+        )
         logger.info(f"[XHS MCP] Tags 详情: 原始={tags}, 处理后={processed_tags}")
 
         # Build MCP arguments
@@ -528,11 +558,11 @@ class XiaohongshuPublisher:
             "content": content,
             "images": processed_images,
         }
-        
+
         # Add tags if provided (XHS MCP handles topic selection via browser automation)
         if processed_tags:
             mcp_args["tags"] = processed_tags
-        
+
         result = await self._call_mcp(
             "publish_content",
             mcp_args,
@@ -543,7 +573,11 @@ class XiaohongshuPublisher:
             mcp_result = result.get("result", {})
             content_list = mcp_result.get("content", [])
             message = ""
-            if content_list and isinstance(content_list, list) and len(content_list) > 0:
+            if (
+                content_list
+                and isinstance(content_list, list)
+                and len(content_list) > 0
+            ):
                 message = content_list[0].get("text", "")
 
             return {
@@ -582,6 +616,25 @@ class XiaohongshuPublisher:
             "message": login_result.get("message", ""),
         }
 
+    async def reset_login(self) -> Dict[str, Any]:
+        result = await self._call_mcp("delete_cookies", timeout=30.0)
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": result.get("error", "重置登录状态失败"),
+            }
+
+        mcp_result = result.get("result", {})
+        content = mcp_result.get("content", [])
+        message = "登录状态已重置，请重新扫码登录"
+        if content and isinstance(content, list) and len(content) > 0:
+            message = content[0].get("text", message)
+
+        return {
+            "success": True,
+            "message": message,
+        }
+
     # ============================================================
     # Cookie 注入 (Phase 1)
     # ============================================================
@@ -589,7 +642,9 @@ class XiaohongshuPublisher:
     @staticmethod
     def get_xhs_cookies_path() -> Path:
         """获取 xhs-mcp sidecar 使用的 cookies.json 路径（volume 挂载点）。"""
-        return Path(os.getenv("XHS_COOKIES_PATH", "runtime/xhs/data/cookies.json")).resolve()
+        return Path(
+            os.getenv("XHS_COOKIES_PATH", "runtime/xhs/data/cookies.json")
+        ).resolve()
 
     @staticmethod
     def _parse_raw_cookie_header(raw_header: str) -> list[dict]:
@@ -598,7 +653,11 @@ class XiaohongshuPublisher:
         输入格式: "name1=val1; name2=val2; ..."
         """
         # 已知需要 httpOnly 的 cookie 名
-        HTTPONLY_NAMES = {"web_session", "galaxy_creator_session_id", "customer-sso-sid"}
+        HTTPONLY_NAMES = {
+            "web_session",
+            "galaxy_creator_session_id",
+            "customer-sso-sid",
+        }
         cookies = []
         for pair in raw_header.split(";"):
             pair = pair.strip()
@@ -609,22 +668,24 @@ class XiaohongshuPublisher:
             value = value.strip()
             if not name:
                 continue
-            cookies.append({
-                "name": name,
-                "value": value,
-                "domain": ".xiaohongshu.com",
-                "path": "/",
-                "expires": -1,
-                "size": len(name) + len(value),
-                "httpOnly": name in HTTPONLY_NAMES,
-                "secure": True,
-                "session": True,
-                "sameSite": "",
-                "priority": "Medium",
-                "sameParty": False,
-                "sourceScheme": "Secure",
-                "sourcePort": 443,
-            })
+            cookies.append(
+                {
+                    "name": name,
+                    "value": value,
+                    "domain": ".xiaohongshu.com",
+                    "path": "/",
+                    "expires": -1,
+                    "size": len(name) + len(value),
+                    "httpOnly": name in HTTPONLY_NAMES,
+                    "secure": True,
+                    "session": True,
+                    "sameSite": "",
+                    "priority": "Medium",
+                    "sameParty": False,
+                    "sourceScheme": "Secure",
+                    "sourcePort": 443,
+                }
+            )
         return cookies
 
     @staticmethod
@@ -654,10 +715,16 @@ class XiaohongshuPublisher:
         if isinstance(cookies_data, str):
             cookies_data = cookies_data.strip()
             if self._is_raw_cookie_header(cookies_data):
-                logger.info("[XHS] Detected raw cookie header string, converting to go-rod format")
+                logger.info(
+                    "[XHS] Detected raw cookie header string, converting to go-rod format"
+                )
                 go_rod_cookies = self._parse_raw_cookie_header(cookies_data)
                 if not go_rod_cookies:
-                    return {"success": False, "message": "解析 cookie 字符串失败，未找到有效的 name=value 对", "login_verified": False}
+                    return {
+                        "success": False,
+                        "message": "解析 cookie 字符串失败，未找到有效的 name=value 对",
+                        "login_verified": False,
+                    }
                 raw = json.dumps(go_rod_cookies, ensure_ascii=False)
             else:
                 raw = cookies_data
@@ -666,7 +733,11 @@ class XiaohongshuPublisher:
         elif isinstance(cookies_data, dict):
             raw = json.dumps(cookies_data, ensure_ascii=False)
         else:
-            return {"success": False, "message": "不支持的 cookies 格式", "login_verified": False}
+            return {
+                "success": False,
+                "message": "不支持的 cookies 格式",
+                "login_verified": False,
+            }
 
         # 2. 基本校验：必须包含 web_session
         if "web_session" not in raw:
@@ -683,7 +754,11 @@ class XiaohongshuPublisher:
             cookie_path.write_text(raw, encoding="utf-8")
             logger.info(f"[XHS] Cookies written to {cookie_path} ({len(raw)} bytes)")
         except OSError as e:
-            return {"success": False, "message": f"写入 cookies 失败: {e}", "login_verified": False}
+            return {
+                "success": False,
+                "message": f"写入 cookies 失败: {e}",
+                "login_verified": False,
+            }
 
         # 4. 验证（xhs-mcp 会在下次请求时重新加载 cookies）
         login_verified = False
@@ -695,7 +770,12 @@ class XiaohongshuPublisher:
 
         return {
             "success": True,
-            "message": "Cookies 已写入" + ("，登录验证通过 ✅" if login_verified else "，但登录验证未通过（xhs-mcp 可能需要重启以加载新 cookies）"),
+            "message": "Cookies 已写入"
+            + (
+                "，登录验证通过 ✅"
+                if login_verified
+                else "，但登录验证未通过（xhs-mcp 可能需要重启以加载新 cookies）"
+            ),
             "login_verified": login_verified,
         }
 
@@ -731,7 +811,9 @@ class XiaohongshuPublisher:
                         data["qr_filename"] = filename
                         data["qr_image_path"] = str(output_path.resolve())
                         # set a 4-min expiry
-                        expires = datetime.now(tz=self._get_app_timezone()) + timedelta(minutes=4)
+                        expires = datetime.now(tz=self._get_app_timezone()) + timedelta(
+                            minutes=4
+                        )
                         data["expires_at"] = expires.isoformat()
                         self._save_login_qrcode_meta(data)
                 return data

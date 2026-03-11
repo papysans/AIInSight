@@ -4,18 +4,37 @@ from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.schemas import (
-    TopicAnalysisRequest, AgentState, ConfigResponse, ConfigUpdateRequest,
-    UserSettingsResponse, UserSettingsUpdateRequest,
-    OutputFileListResponse, OutputFileInfo, OutputFileContentResponse,
-    WorkflowStatusResponse, LLMProviderConfig,
-    XhsPublishRequest, XhsLoginQrcodeResponse,
-    XhsUploadCookiesRequest, XhsUploadCookiesResponse,
-    TitleCardRenderRequest, RadarCardRenderRequest,
-    TimelineCardRenderRequest, TrendCardRenderRequest, ImpactCardRenderRequest,
-    DailyRankCardRenderRequest, HotTopicCardRenderRequest, CardRenderResponse,
-    AiDailyCollectRequest, AiDailyResponse, AiDailyTopicDetailResponse,
-    AiDailyAnalyzeRequest, AiDailyCardsRequest, AiDailyPublishRequest,
-    AiDailyRankingCardsRequest, AiDailyRankingPublishRequest,
+    TopicAnalysisRequest,
+    AgentState,
+    ConfigResponse,
+    ConfigUpdateRequest,
+    UserSettingsResponse,
+    UserSettingsUpdateRequest,
+    OutputFileListResponse,
+    OutputFileInfo,
+    OutputFileContentResponse,
+    WorkflowStatusResponse,
+    LLMProviderConfig,
+    XhsPublishRequest,
+    XhsLoginQrcodeResponse,
+    XhsUploadCookiesRequest,
+    XhsUploadCookiesResponse,
+    TitleCardRenderRequest,
+    RadarCardRenderRequest,
+    TimelineCardRenderRequest,
+    TrendCardRenderRequest,
+    ImpactCardRenderRequest,
+    DailyRankCardRenderRequest,
+    HotTopicCardRenderRequest,
+    CardRenderResponse,
+    AiDailyCollectRequest,
+    AiDailyResponse,
+    AiDailyTopicDetailResponse,
+    AiDailyAnalyzeRequest,
+    AiDailyCardsRequest,
+    AiDailyPublishRequest,
+    AiDailyRankingCardsRequest,
+    AiDailyRankingPublishRequest,
     TopicCardsRequest,
 )
 from app.services.workflow import app_graph
@@ -88,7 +107,9 @@ def _build_card_preview_urls(request: Request, filename: str) -> tuple[str, str]
     )
 
 
-def _enrich_card_render_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_card_render_result(
+    request: Request, result: Dict[str, Any]
+) -> Dict[str, Any]:
     enriched = dict(result)
     output_path = enriched.get("output_path")
     if not output_path:
@@ -114,7 +135,9 @@ def _enrich_card_collection(request: Request, cards: Dict[str, Any]) -> Dict[str
     return enriched
 
 
-def _enrich_xhs_publish_result(request: Request, result: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_xhs_publish_result(
+    request: Request, result: Dict[str, Any]
+) -> Dict[str, Any]:
     enriched = dict(result)
     qr_filename = enriched.get("qr_filename")
     if qr_filename:
@@ -143,7 +166,11 @@ async def analyze_topic(request: TopicAnalysisRequest):
     # Resolve depth preset
     depth = request.depth or "standard"
     depth_cfg = settings.DEPTH_PRESETS.get(depth, settings.DEPTH_PRESETS["standard"])
-    debate_rounds = request.debate_rounds if request.debate_rounds is not None else depth_cfg.get("debate_rounds", 2)
+    debate_rounds = (
+        request.debate_rounds
+        if request.debate_rounds is not None
+        else depth_cfg.get("debate_rounds", 2)
+    )
     if debate_rounds < 0 or debate_rounds > 5:
         raise HTTPException(status_code=400, detail="debate_rounds 必须在 0-5 之间")
 
@@ -151,7 +178,9 @@ async def analyze_topic(request: TopicAnalysisRequest):
     if image_count < 0 or image_count > 9:
         raise HTTPException(status_code=400, detail="image_count 必须在 0-9 之间")
 
-    logger.info(f"[analyze] topic='{request.topic}', depth={depth}, debate_rounds={debate_rounds}, image_count={image_count}")
+    logger.info(
+        f"[analyze] topic='{request.topic}', depth={depth}, debate_rounds={debate_rounds}, image_count={image_count}"
+    )
 
     await workflow_status.start_workflow(request.topic)
 
@@ -187,7 +216,11 @@ async def analyze_topic(request: TopicAnalysisRequest):
                     display_name = node_name_map.get(node_name, node_name.capitalize())
 
                     # Extract source stats
-                    source_stats = state_update.get("source_stats") if node_name == "source_retriever" else None
+                    source_stats = (
+                        state_update.get("source_stats")
+                        if node_name == "source_retriever"
+                        else None
+                    )
 
                     final_copy = None
                     if node_name == "writer":
@@ -236,10 +269,18 @@ async def analyze_topic(request: TopicAnalysisRequest):
 async def get_config():
     """获取当前配置"""
     llm_providers = {
-        "reporter": [LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["reporter"]],
-        "analyst": [LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["analyst"]],
-        "debater": [LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["debater"]],
-        "writer": [LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["writer"]],
+        "reporter": [
+            LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["reporter"]
+        ],
+        "analyst": [
+            LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["analyst"]
+        ],
+        "debater": [
+            LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["debater"]
+        ],
+        "writer": [
+            LLMProviderConfig(**item) for item in settings.AGENT_CONFIG["writer"]
+        ],
     }
 
     return ConfigResponse(
@@ -289,9 +330,17 @@ async def put_user_settings(request: UserSettingsUpdateRequest):
         for api in request.llm_apis:
             provider_key = api.providerKey
             model = api.model
-            if model and provider_key and not settings.validate_model(provider_key, model):
+            if (
+                model
+                and provider_key
+                and not settings.validate_model(provider_key, model)
+            ):
                 available_models = settings.get_models_for_provider(provider_key)
-                model_names = [item["id"] for item in available_models] if available_models else []
+                model_names = (
+                    [item["id"] for item in available_models]
+                    if available_models
+                    else []
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=f"模型 {model} 在提供商 {provider_key} 中无效。可用模型: {', '.join(model_names)}",
@@ -305,15 +354,23 @@ async def put_user_settings(request: UserSettingsUpdateRequest):
             model = override.get("model")
             if provider and model and not settings.validate_model(provider, model):
                 available_models = settings.get_models_for_provider(provider)
-                model_names = [item["id"] for item in available_models] if available_models else []
+                model_names = (
+                    [item["id"] for item in available_models]
+                    if available_models
+                    else []
+                )
                 raise HTTPException(
                     status_code=400,
                     detail=f"Agent {agent_key} 的模型 {model} 在提供商 {provider} 中无效。可用模型: {', '.join(model_names)}",
                 )
 
     merged = update_user_settings(
-        llm_apis=[api.model_dump() for api in request.llm_apis] if request.llm_apis is not None else None,
-        volcengine=request.volcengine.model_dump() if request.volcengine is not None else None,
+        llm_apis=[api.model_dump() for api in request.llm_apis]
+        if request.llm_apis is not None
+        else None,
+        volcengine=request.volcengine.model_dump()
+        if request.volcengine is not None
+        else None,
         agent_llm_overrides=request.agent_llm_overrides,
     )
 
@@ -330,20 +387,20 @@ async def get_output_files(limit: int = 20, offset: int = 0):
     output_dir = Path("outputs")
     if not output_dir.exists():
         return OutputFileListResponse(files=[], total=0)
-    
+
     # 获取所有 .md 文件
     md_files = list(output_dir.glob("*.md"))
-    
+
     # 排除 TECH_DOC.md
     md_files = [f for f in md_files if f.name != "TECH_DOC.md"]
-    
+
     # 按修改时间排序（最新的在前）
     md_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-    
+
     # 分页
     total = len(md_files)
-    paginated_files = md_files[offset:offset + limit]
-    
+    paginated_files = md_files[offset : offset + limit]
+
     # 构建文件信息
     file_infos = []
     for file_path in paginated_files:
@@ -355,14 +412,16 @@ async def get_output_files(limit: int = 20, offset: int = 0):
             topic = parts[2]
         else:
             topic = file_path.stem
-        
-        file_infos.append(OutputFileInfo(
-            filename=file_path.name,
-            topic=topic,
-            created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-            size=stat.st_size
-        ))
-    
+
+        file_infos.append(
+            OutputFileInfo(
+                filename=file_path.name,
+                topic=topic,
+                created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                size=stat.st_size,
+            )
+        )
+
     return OutputFileListResponse(files=file_infos, total=total)
 
 
@@ -372,26 +431,24 @@ async def get_output_file(filename: str):
     # 安全检查：防止路径遍历攻击
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="无效的文件名")
-    
+
     file_path = Path("outputs") / filename
-    
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
-    
+
     if not file_path.is_file():
         raise HTTPException(status_code=400, detail="不是有效的文件")
-    
+
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
-        
+
         stat = file_path.stat()
         created_at = datetime.fromtimestamp(stat.st_mtime).isoformat()
-        
+
         return OutputFileContentResponse(
-            filename=filename,
-            content=content,
-            created_at=created_at
+            filename=filename, content=content, created_at=created_at
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"读取文件失败: {str(e)}")
@@ -406,10 +463,11 @@ async def get_workflow_status():
 
 # --- 模型管理接口 ---
 
+
 @router.get("/models")
 async def get_models():
     """获取所有提供商的模型列表
-    
+
     返回格式：
     {
         "deepseek": [
@@ -427,13 +485,13 @@ async def get_models():
 @router.post("/validate-model")
 async def validate_model(payload: dict):
     """验证提供商-模型组合是否有效
-    
+
     请求体：
     {
         "provider": "deepseek",
         "model": "deepseek-chat"
     }
-    
+
     返回：
     {
         "valid": true/false,
@@ -442,20 +500,14 @@ async def validate_model(payload: dict):
     """
     provider = payload.get("provider", "").strip()
     model = payload.get("model", "").strip()
-    
+
     if not provider or not model:
-        return {
-            "valid": False,
-            "message": "提供商和模型参数不能为空"
-        }
-    
+        return {"valid": False, "message": "提供商和模型参数不能为空"}
+
     is_valid = settings.validate_model(provider, model)
-    
+
     if is_valid:
-        return {
-            "valid": True,
-            "message": f"模型 {model} 在提供商 {provider} 中有效"
-        }
+        return {"valid": True, "message": f"模型 {model} 在提供商 {provider} 中有效"}
     else:
         # 获取该提供商的可用模型列表
         available_models = settings.get_models_for_provider(provider)
@@ -463,28 +515,29 @@ async def validate_model(payload: dict):
             model_names = [m["id"] for m in available_models]
             return {
                 "valid": False,
-                "message": f"模型 {model} 在提供商 {provider} 中无效。可用模型: {', '.join(model_names)}"
+                "message": f"模型 {model} 在提供商 {provider} 中无效。可用模型: {', '.join(model_names)}",
             }
         else:
             return {
                 "valid": False,
-                "message": f"提供商 {provider} 不存在或没有可用模型"
+                "message": f"提供商 {provider} 不存在或没有可用模型",
             }
 
 
 # --- 小红书 MCP 发布接口 ---
+
 
 @router.get("/xhs/status")
 async def get_xhs_status():
     """检查小红书 MCP 服务状态和登录状态"""
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
     from app.schemas import XhsStatusResponse
-    
+
     status = await xiaohongshu_publisher.get_status()
     return XhsStatusResponse(
         mcp_available=status.get("mcp_available", False),
         login_status=status.get("login_status", False),
-        message=status.get("message", "")
+        message=status.get("message", ""),
     )
 
 
@@ -533,10 +586,17 @@ async def get_xhs_login_qrcode_file(filename: str):
     return FileResponse(file_path, media_type="image/png", filename=filename)
 
 
+@router.post("/xhs/login/reset")
+async def reset_xhs_login():
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    return await xiaohongshu_publisher.reset_login()
+
+
 @router.post("/xhs/publish")
 async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
     """手动发布内容到小红书
-    
+
     请求体：
     - title: 标题
     - content: 正文内容
@@ -544,40 +604,36 @@ async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
     """
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
     from app.schemas import XhsPublishRequest, XhsPublishResponse
-    
+
     if not request.title or not request.content:
-        return XhsPublishResponse(
-            success=False,
-            message="标题和内容不能为空"
-        )
-    
+        return XhsPublishResponse(success=False, message="标题和内容不能为空")
+
     if not request.images:
-        return XhsPublishResponse(
-            success=False,
-            message="至少需要一张图片"
-        )
-    
+        return XhsPublishResponse(success=False, message="至少需要一张图片")
+
     result = await xiaohongshu_publisher.publish_content(
         title=request.title,
         content=request.content,
         images=request.images,
-        tags=request.tags
+        tags=request.tags,
     )
     result = _enrich_xhs_publish_result(http_request, result)
-    
+
     return XhsPublishResponse(
         success=result.get("success", False),
         message=result.get("message") or result.get("error", "发布失败"),
         login_required=result.get("login_required", False),
+        login_qrcode=result.get("login_qrcode"),
         qr_image_url=result.get("qr_image_url"),
         qr_image_route=result.get("qr_image_route"),
         qr_image_path=result.get("qr_image_path"),
         expires_at=result.get("expires_at"),
-        data=result.get("data")
+        data=result.get("data"),
     )
 
 
 # ---- Phase 1: Cookie 注入 ----
+
 
 @router.post("/xhs/upload-cookies", response_model=XhsUploadCookiesResponse)
 async def upload_xhs_cookies(request: XhsUploadCookiesRequest):
@@ -594,6 +650,7 @@ async def upload_xhs_cookies(request: XhsUploadCookiesRequest):
 
 
 # ---- Phase 2: Playwright 登录代理 ----
+
 
 @router.get("/xhs/login-qrcode-v2", response_model=XhsLoginQrcodeResponse)
 async def get_xhs_login_qrcode_v2(request: Request):
@@ -696,14 +753,18 @@ async def render_radar_card(request: RadarCardRenderRequest, http_request: Reque
     """渲染雷达图卡"""
     result = await card_render_client.render_radar(
         labels=request.labels,
-        datasets=[d if isinstance(d, dict) else d.model_dump() for d in request.datasets],
+        datasets=[
+            d if isinstance(d, dict) else d.model_dump() for d in request.datasets
+        ],
     )
     result = _enrich_card_render_result(http_request, result)
     return CardRenderResponse(**result)
 
 
 @router.post("/cards/timeline", response_model=CardRenderResponse)
-async def render_timeline_card(request: TimelineCardRenderRequest, http_request: Request):
+async def render_timeline_card(
+    request: TimelineCardRenderRequest, http_request: Request
+):
     """渲染辩论时间线卡"""
     result = await card_render_client.render_timeline(timeline=request.timeline)
     result = _enrich_card_render_result(http_request, result)
@@ -723,7 +784,9 @@ async def render_trend_card(request: TrendCardRenderRequest, http_request: Reque
 
 
 @router.post("/cards/daily-rank", response_model=CardRenderResponse)
-async def render_daily_rank_card(request: DailyRankCardRenderRequest, http_request: Request):
+async def render_daily_rank_card(
+    request: DailyRankCardRenderRequest, http_request: Request
+):
     """渲染每日榜单卡"""
     result = await card_render_client.render_daily_rank(
         date=request.date,
@@ -735,7 +798,9 @@ async def render_daily_rank_card(request: DailyRankCardRenderRequest, http_reque
 
 
 @router.post("/cards/hot-topic", response_model=CardRenderResponse)
-async def render_hot_topic_card(request: HotTopicCardRenderRequest, http_request: Request):
+async def render_hot_topic_card(
+    request: HotTopicCardRenderRequest, http_request: Request
+):
     """渲染热点详情卡"""
     result = await card_render_client.render_hot_topic(
         title=request.title,
@@ -753,6 +818,7 @@ async def render_hot_topic_card(request: HotTopicCardRenderRequest, http_request
 # ============================================================
 # 话题分析卡片生成
 # ============================================================
+
 
 @router.post("/topic/cards")
 async def generate_topic_cards(request: TopicCardsRequest, http_request: Request):
@@ -781,19 +847,27 @@ async def generate_topic_cards(request: TopicCardsRequest, http_request: Request
     for ct in request.card_types:
         if ct == "title":
             result = await card_render_client.render_title(title=request.title)
-            cards["title"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["title"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
         elif ct == "impact":
             result = await card_render_client.render_impact(**impact_payload)
-            cards["impact"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["impact"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
         elif ct == "radar":
             result = await card_render_client.render_radar(
                 labels=radar_payload["labels"],
                 datasets=radar_payload["datasets"],
             )
-            cards["radar"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["radar"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
         elif ct == "timeline":
             result = await card_render_client.render_timeline(timeline=timeline_payload)
-            cards["timeline"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["timeline"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
         elif ct == "hot-topic":
             result = await card_render_client.render_hot_topic(
                 title=request.title,
@@ -803,7 +877,9 @@ async def generate_topic_cards(request: TopicCardsRequest, http_request: Request
                 score=request.score,
                 sources=request.sources[:4],
             )
-            cards["hot-topic"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["hot-topic"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
     return {"cards": cards}
 
 
@@ -851,6 +927,7 @@ async def ai_daily_analyze_topic(topic_id: str, request: AiDailyAnalyzeRequest =
 
     # Convert topic to NewsRequest-compatible input and run workflow
     from app.services.ai_daily_workflow_adapter import topic_to_workflow_input
+
     workflow_input = topic_to_workflow_input(topic, depth=depth)
 
     # Run the existing analysis workflow
@@ -880,14 +957,21 @@ def _topic_to_hot_topic_payload(topic) -> dict:
         "tags": (topic.tags or [])[:6],
         "source_count": topic.source_count or len(topic.sources or []),
         "score": topic.final_score,
-        "sources": [s.source for s in (topic.sources or [])[:4] if getattr(s, "source", None)],
+        "sources": [
+            s.source for s in (topic.sources or [])[:4] if getattr(s, "source", None)
+        ],
     }
 
 
 @router.post("/ai-daily/ranking/cards")
-async def ai_daily_ranking_cards(http_request: Request, request: AiDailyRankingCardsRequest = None):
+async def ai_daily_ranking_cards(
+    http_request: Request, request: AiDailyRankingCardsRequest = None
+):
     """为今日 AI 热点整榜生成卡片套图"""
-    from app.services.publish.ai_daily_publish_service import generate_ai_daily_ranking_cards
+    from app.services.publish.ai_daily_publish_service import (
+        generate_ai_daily_ranking_cards,
+    )
+
     req = request or AiDailyRankingCardsRequest()
     result = await generate_ai_daily_ranking_cards(
         limit=req.limit,
@@ -895,15 +979,20 @@ async def ai_daily_ranking_cards(http_request: Request, request: AiDailyRankingC
         card_types=req.card_types,
     )
     if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Card generation failed"))
+        raise HTTPException(
+            status_code=400, detail=result.get("error", "Card generation failed")
+        )
     result["cards"] = _enrich_card_collection(http_request, result.get("cards", {}))
     return result
 
 
 @router.post("/ai-daily/ranking/publish")
-async def ai_daily_ranking_publish(http_request: Request, request: AiDailyRankingPublishRequest = None):
+async def ai_daily_ranking_publish(
+    http_request: Request, request: AiDailyRankingPublishRequest = None
+):
     """将今日 AI 热点整榜发布到小红书"""
     from app.services.publish.ai_daily_publish_service import publish_ai_daily_ranking
+
     req = request or AiDailyRankingPublishRequest()
     result = await publish_ai_daily_ranking(
         limit=req.limit,
@@ -917,7 +1006,9 @@ async def ai_daily_ranking_publish(http_request: Request, request: AiDailyRankin
 
 
 @router.post("/ai-daily/{topic_id}/cards")
-async def ai_daily_topic_cards(topic_id: str, http_request: Request, request: AiDailyCardsRequest = None):
+async def ai_daily_topic_cards(
+    topic_id: str, http_request: Request, request: AiDailyCardsRequest = None
+):
     """为单个话题生成卡片套图"""
     topic = await get_topic_by_id(topic_id)
     if not topic:
@@ -929,25 +1020,37 @@ async def ai_daily_topic_cards(topic_id: str, http_request: Request, request: Ai
     for ct in card_types:
         if ct == "title":
             result = await card_render_client.render_title(title=topic.title)
-            cards["title"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["title"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
         elif ct == "hot-topic":
-            result = await card_render_client.render_hot_topic(**_topic_to_hot_topic_payload(topic))
-            cards["hot-topic"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            result = await card_render_client.render_hot_topic(
+                **_topic_to_hot_topic_payload(topic)
+            )
+            cards["hot-topic"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
         elif ct == "daily-rank":
             from datetime import date as date_cls
+
             result = await card_render_client.render_daily_rank(
                 date=date_cls.today().isoformat(),
                 topics=[_topic_to_rank_item(topic, 1)],
             )
-            cards["daily-rank"] = CardRenderResponse(**_enrich_card_render_result(http_request, result))
+            cards["daily-rank"] = CardRenderResponse(
+                **_enrich_card_render_result(http_request, result)
+            )
 
     return {"topic_id": topic_id, "cards": cards}
 
 
 @router.post("/ai-daily/{topic_id}/publish")
-async def ai_daily_publish(topic_id: str, http_request: Request, request: AiDailyPublishRequest = None):
+async def ai_daily_publish(
+    topic_id: str, http_request: Request, request: AiDailyPublishRequest = None
+):
     """将 AI 日报话题发布到小红书"""
     from app.services.publish.ai_daily_publish_service import publish_ai_daily_topic
+
     req = request or AiDailyPublishRequest()
     result = await publish_ai_daily_topic(
         topic_id=topic_id,

@@ -16,7 +16,110 @@ from app.services.ai_daily_pipeline import get_topic_by_id, collect_ai_daily
 FALLBACK_TAGS = ["AI热点", "AI日报", "科技趋势", "人工智能", "科技资讯"]
 
 
-async def _generate_xhs_tags(title: str, summary: str = "", count: int = 5) -> List[str]:
+def _contains_chinese(text: str) -> bool:
+    return any("\u4e00" <= c <= "\u9fff" for c in text)
+
+
+def _clean_editorial_fragment(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    cleaned = cleaned.strip("，。；;:：、 ")
+    if not cleaned:
+        return ""
+    if len(cleaned) > 28:
+        cleaned = f"{cleaned[:28]}…"
+    return cleaned
+
+
+def _topic_signal_label(topic: Any) -> str:
+    tags = [str(tag).strip().lower() for tag in (getattr(topic, "tags", None) or [])]
+    sources = getattr(topic, "sources", None) or []
+    source_types = {
+        str(getattr(source, "source_type", "")).strip().lower() for source in sources
+    }
+    title = str(getattr(topic, "title", ""))
+
+    if "research" in source_types or any(
+        tag in {"论文", "research", "paper", "评测"} for tag in tags
+    ):
+        return "研究"
+    if (
+        "code" in source_types
+        or any(tag in {"开源", "agent", "github"} for tag in tags)
+        or "GitHub" in title
+    ):
+        return "开源"
+    if "product" in source_types or any(
+        tag in {"产品", "多模态", "tool"} for tag in tags
+    ):
+        return "产品"
+    return "行业"
+
+
+def _infer_day_themes(topics: List[Any]) -> List[str]:
+    counts: Dict[str, int] = {}
+    for topic in topics:
+        label = _topic_signal_label(topic)
+        counts[label] = counts.get(label, 0) + 1
+    return [
+        label
+        for label, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:2]
+    ]
+
+
+def _topic_supporting_line(topic: Any) -> str:
+    title = str(getattr(topic, "title", "")).strip()
+    summary = _clean_editorial_fragment(str(getattr(topic, "summary_zh", "") or ""))
+    label = _topic_signal_label(topic)
+    source_count = max(1, int(getattr(topic, "source_count", 1) or 1))
+
+    if label == "开源":
+        if summary and _contains_chinese(summary) and summary != title:
+            return f"像 {title} 这类开源项目今天仍然很活跃，{summary}。"
+        return f"像 {title} 这类开源项目今天依旧在被讨论，开发者侧的关注还在。"
+    if label == "研究":
+        if summary and _contains_chinese(summary) and summary != title:
+            return f"研究线也没闲着，{title} 这类话题说明 {summary}。"
+        return f"研究线也没停，{title} 这类进展更像是在把能力往真实场景里压。"
+    if label == "产品":
+        if summary and _contains_chinese(summary) and summary != title:
+            return f"产品侧最直观的是 {title}，{summary}。"
+        return f"产品侧最直观的是 {title}，重点不是噱头，而是离真实可用又近了一步。"
+
+    if summary and _contains_chinese(summary) and summary != title:
+        return f"{title} 这条也值得看，{summary}。"
+    if source_count >= 2:
+        return f"{title} 这条被多处同时提到，至少说明它今天不算边角料。"
+    return f"{title} 这条先记一笔，信号不算满，但方向已经开始露头。"
+
+
+def _compose_editorial_ranking_copy(date_text: str, topics: List[Any]) -> str:
+    selected = (topics or [])[:3]
+    if not selected:
+        return f"{date_text} 的 AI 热点不算多，但有几条方向已经开始冒头。"
+
+    themes = _infer_day_themes(selected)
+    if len(themes) >= 2:
+        opening = f"今天 AI 圈比较明显的主线，是{themes[0]}和{themes[1]}这两条线在一起往前走。"
+    elif themes:
+        opening = f"今天 AI 圈更值得看的，不是一条孤立新闻，而是{themes[0]}方向又多了几条新动静。"
+    else:
+        opening = "今天 AI 圈的信息很多，但真正值得看的是几条已经能串起来的信号。"
+
+    lines = [opening]
+    for topic in selected:
+        lines.append(_topic_supporting_line(topic))
+
+    if themes:
+        bottom_line = f"Bottom line：如果只想抓大意，先盯住{themes[0]}这条线，今天的重点基本都绕着它展开。"
+    else:
+        bottom_line = "Bottom line：先看这些已经冒头的方向，比逐条追零散消息更省时间。"
+    lines.append(bottom_line)
+    return "\n".join(lines).strip()
+
+
+async def _generate_xhs_tags(
+    title: str, summary: str = "", count: int = 5
+) -> List[str]:
     """用 LLM 为小红书内容生成中文话题标签。失败时回退到固定标签。"""
     try:
         from langchain_core.messages import SystemMessage, HumanMessage
@@ -33,19 +136,27 @@ async def _generate_xhs_tags(title: str, summary: str = "", count: int = 5) -> L
             "【示例输出】\n"
             "人工智能,科技热点,效率神器,程序员,深度学习\n"
         )
-        input_text = f"标题：{title}\n摘要：{summary[:200]}" if summary else f"标题：{title}"
-        resp = await llm.ainvoke([
-            SystemMessage(content=prompt),
-            HumanMessage(content=input_text),
-        ])
+        input_text = (
+            f"标题：{title}\n摘要：{summary[:200]}" if summary else f"标题：{title}"
+        )
+        resp = await llm.ainvoke(
+            [
+                SystemMessage(content=prompt),
+                HumanMessage(content=input_text),
+            ]
+        )
         raw = getattr(resp, "content", "")
         if isinstance(raw, list):
             raw = "".join(str(c) for c in raw)
         # 解析逗号/空格分隔的标签
         candidates = re.split(r"[,，\s]+", raw.strip())
         # 只保留纯中文标签
-        tags = [t.strip().lstrip("#") for t in candidates
-                if t.strip() and all("\u4e00" <= c <= "\u9fff" for c in t.strip().lstrip("#"))]
+        tags = [
+            t.strip().lstrip("#")
+            for t in candidates
+            if t.strip()
+            and all("\u4e00" <= c <= "\u9fff" for c in t.strip().lstrip("#"))
+        ]
         if tags:
             logger.info(f"[AiDailyPublish] LLM generated tags: {tags[:count]}")
             return tags[:count]
@@ -83,7 +194,7 @@ async def publish_ai_daily_topic(
     pub_content = content or topic.summary_zh or topic.title
     # 优先使用自定义标签（过滤为中文），否则用 LLM 生成
     if tags:
-        pub_tags = [t for t in tags if t and any('\u4e00' <= c <= '\u9fff' for c in t)]
+        pub_tags = [t for t in tags if t and any("\u4e00" <= c <= "\u9fff" for c in t)]
     else:
         pub_tags = []
     if not pub_tags:
@@ -104,18 +215,25 @@ async def publish_ai_daily_topic(
                     tags=pub_tags,
                     source_count=topic.source_count or len(topic.sources or []),
                     score=topic.final_score,
-                    sources=[s.source for s in (topic.sources or [])[:4] if getattr(s, "source", None)],
+                    sources=[
+                        s.source
+                        for s in (topic.sources or [])[:4]
+                        if getattr(s, "source", None)
+                    ],
                 )
             elif ct == "daily-rank":
                 from datetime import date as date_cls
+
                 result = await card_render_client.render_daily_rank(
                     date=date_cls.today().isoformat(),
-                    topics=[{
-                        "rank": 1,
-                        "title": topic.title,
-                        "score": topic.final_score,
-                        "tags": (topic.tags or [])[:3],
-                    }],
+                    topics=[
+                        {
+                            "rank": 1,
+                            "title": topic.title,
+                            "score": topic.final_score,
+                            "tags": (topic.tags or [])[:3],
+                        }
+                    ],
                 )
             else:
                 continue
@@ -153,25 +271,21 @@ def _default_ranking_title(date_text: str, limit: int) -> str:
 
 
 def _default_ranking_content(date_text: str, topics: List[Any]) -> str:
-    lines = [f"{date_text} AI 热点榜单速递", ""]
-    for idx, topic in enumerate(topics[:5], 1):
-        lines.append(f"{idx}. {topic.title}")
-        summary = (topic.summary_zh or "").strip()
-        if summary:
-            if len(summary) > 42:
-                summary = f"{summary[:42]}…"
-            lines.append(f"   {summary}")
-        lines.append("")
-    lines.append("#AI热点 #AI日报 #科技趋势")
-    return "\n".join(lines).strip()
+    return _compose_editorial_ranking_copy(date_text, topics)
 
 
-async def _default_ranking_tags(topics: List[Any], custom_tags: Optional[List[str]] = None) -> List[str]:
+async def _default_ranking_tags(
+    topics: List[Any], custom_tags: Optional[List[str]] = None
+) -> List[str]:
     """整榜发布标签：优先自定义，然后 LLM 生成，最后兜底固定标签。"""
     tags: List[str] = []
-    for tag in (custom_tags or []):
+    for tag in custom_tags or []:
         cleaned = tag.strip().lstrip("#")
-        if cleaned and cleaned not in tags and any('\u4e00' <= c <= '\u9fff' for c in cleaned):
+        if (
+            cleaned
+            and cleaned not in tags
+            and any("\u4e00" <= c <= "\u9fff" for c in cleaned)
+        ):
             tags.append(cleaned)
     if len(tags) < 5:
         # 用榜单前几个话题的标题拼接给 LLM 生成标签
@@ -200,13 +314,18 @@ async def generate_ai_daily_ranking_cards(
 
     for ct in types:
         if ct == "title":
-            result = await card_render_client.render_title(title=title_text, emoji="📊", theme="sunset")
+            result = await card_render_client.render_title(
+                title=title_text, emoji="📊", theme="sunset"
+            )
             cards["title"] = result
         elif ct == "daily-rank":
             result = await card_render_client.render_daily_rank(
                 date=ranking.date,
                 title="AI 每日热点榜单",
-                topics=[_topic_to_rank_item(topic, idx) for idx, topic in enumerate(topics, 1)],
+                topics=[
+                    _topic_to_rank_item(topic, idx)
+                    for idx, topic in enumerate(topics, 1)
+                ],
             )
             cards["daily-rank"] = result
 
@@ -261,9 +380,11 @@ async def publish_ai_daily_ranking(
     )
 
     if publish_result.get("success"):
-        publish_result.update({
-            "date": ranking.date,
-            "limit": len(topics),
-            "title": title_text,
-        })
+        publish_result.update(
+            {
+                "date": ranking.date,
+                "limit": len(topics),
+                "title": title_text,
+            }
+        )
     return publish_result

@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Official upstream login flow is the supported public XHS authentication path
 The system SHALL define the upstream official Xiaohongshu authentication workflow exposed by `xiaohongshu-mcp` as the supported public authentication flow for Xiaohongshu operations exposed through skills, MCP-facing guidance, and user-facing operational documentation.
