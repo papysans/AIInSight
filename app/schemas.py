@@ -191,6 +191,8 @@ class XhsLoginQrcodeResponse(BaseModel):
     qr_image_url: Optional[str] = None
     qr_image_route: Optional[str] = None
     qr_image_path: Optional[str] = None
+    qr_preview_url: Optional[str] = None
+    qr_ascii: Optional[str] = None
     expires_at: Optional[str] = None
     login_method: Optional[str] = None  # "xhs-mcp" or "playwright"
     session_id: Optional[str] = None  # Playwright login session ID

@@ -1,6 +1,6 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from typing import Optional, List, Dict, Any
 from loguru import logger
 from app.schemas import (
@@ -564,12 +564,20 @@ async def get_xhs_login_qrcode(request: Request):
 
     qr_filename = result.get("qr_filename", "")
     qr_route, qr_url = _build_xhs_qrcode_urls(request, qr_filename)
+
+    # Build preview page URL
+    preview_base = _get_xhs_qrcode_public_base_url()
+    preview_route = "/api/xhs/login-qrcode/preview"
+    qr_preview_url = f"{preview_base}{preview_route}" if preview_base else str(request.url_for("preview_xhs_login_qrcode"))
+
     return XhsLoginQrcodeResponse(
         success=True,
         message=result.get("message", "请使用小红书 App 扫码登录"),
         qr_image_url=qr_url,
         qr_image_route=qr_route,
         qr_image_path=result.get("qr_image_path"),
+        qr_preview_url=qr_preview_url,
+        qr_ascii=result.get("qr_ascii"),
         expires_at=result.get("expires_at"),
     )
 
@@ -583,7 +591,78 @@ async def get_xhs_login_qrcode_file(filename: str):
     if output_dir != file_path.parent or not file_path.is_file():
         raise HTTPException(status_code=404, detail="二维码文件不存在")
 
-    return FileResponse(file_path, media_type="image/png", filename=filename)
+    return FileResponse(file_path, media_type="image/png")
+
+
+@router.get("/xhs/login-qrcode/preview", response_class=HTMLResponse)
+async def preview_xhs_login_qrcode(request: Request):
+    """HTML 预览页：内嵌 QR 码图片 + 过期倒计时 + 扫码提示。"""
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    meta = xiaohongshu_publisher._load_cached_login_qrcode()
+
+    if not meta or not meta.get("qr_filename"):
+        return HTMLResponse(
+            "<html><body style='font-family:sans-serif;text-align:center;padding:60px'>"
+            "<h2>暂无可用的登录二维码</h2>"
+            "<p>请先调用 <code>get_xhs_login_qrcode</code> 生成二维码</p>"
+            "</body></html>",
+            status_code=404,
+        )
+
+    qr_filename = meta["qr_filename"]
+    _, qr_url = _build_xhs_qrcode_urls(request, qr_filename)
+    expires_at = meta.get("expires_at", "")
+    message = meta.get("message", "请使用小红书 App 扫码登录")
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>小红书登录二维码</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+         display: flex; flex-direction: column; align-items: center;
+         justify-content: center; min-height: 100vh; margin: 0;
+         background: #f5f5f5; color: #333; }}
+  .card {{ background: #fff; border-radius: 16px; padding: 40px;
+           box-shadow: 0 4px 24px rgba(0,0,0,.08); text-align: center;
+           max-width: 420px; width: 90%; }}
+  img {{ max-width: 280px; border-radius: 8px; margin: 20px 0; }}
+  .msg {{ font-size: 16px; margin-bottom: 12px; }}
+  .timer {{ font-size: 14px; color: #888; margin-top: 8px; }}
+  .expired {{ color: #e53935; font-weight: bold; }}
+  .hint {{ font-size: 13px; color: #999; margin-top: 16px; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>🔐 小红书扫码登录</h2>
+  <p class="msg">{message}</p>
+  <img src="{qr_url}" alt="登录二维码" />
+  <div class="timer" id="timer"></div>
+  <p class="hint">扫码后关闭此页面，回到 CLI 确认登录状态</p>
+</div>
+<script>
+(function() {{
+  var exp = "{expires_at}";
+  if (!exp) return;
+  var timer = document.getElementById("timer");
+  function tick() {{
+    var now = Date.now(), end = new Date(exp).getTime();
+    var left = Math.max(0, Math.floor((end - now) / 1000));
+    if (left <= 0) {{ timer.className = "timer expired"; timer.textContent = "⚠️ 二维码已过期，请重新获取"; return; }}
+    var m = Math.floor(left / 60), s = left % 60;
+    timer.textContent = "⏱ 剩余 " + m + ":" + (s < 10 ? "0" : "") + s;
+    setTimeout(tick, 1000);
+  }}
+  tick();
+}})();
+</script>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 
 @router.post("/xhs/login/reset")

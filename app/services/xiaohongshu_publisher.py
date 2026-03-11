@@ -181,11 +181,15 @@ class XiaohongshuPublisher:
         if expires_at <= datetime.now(tz=self._get_app_timezone()):
             return None
 
+        # Generate ASCII QR from the cached PNG file
+        ascii_qr = self._generate_ascii_qr(qr_file.read_bytes())
+
         return {
             "success": True,
             "message": meta.get("message") or "请使用小红书 App 扫码登录",
             "qr_filename": qr_filename or qr_file.name,
             "qr_image_path": str(qr_file),
+            "qr_ascii": ascii_qr,
             "expires_at": expires_at.isoformat(),
         }
 
@@ -215,6 +219,60 @@ class XiaohongshuPublisher:
                     image_b64 = part.get("data")
 
         return message, image_b64
+
+    @staticmethod
+    def _generate_ascii_qr(png_bytes: bytes) -> Optional[str]:
+        """从 QR 码 PNG 图片中解码出 URL，再生成终端可扫描的 ASCII 二维码。"""
+        try:
+            from PIL import Image
+            from pyzbar.pyzbar import decode as pyzbar_decode
+            import qrcode
+            import io
+
+            img = Image.open(io.BytesIO(png_bytes))
+            decoded = pyzbar_decode(img)
+            if not decoded:
+                logger.warning("[XHS QR] pyzbar 未能从 PNG 中解码出 QR 数据")
+                return None
+
+            qr_data = decoded[0].data.decode("utf-8")
+            logger.info(f"[XHS QR] 解码出 QR 数据: {qr_data[:80]}...")
+
+            qr = qrcode.QRCode(
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=1,
+                border=1,
+            )
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+
+            # 使用 Unicode half-block 字符生成紧凑的终端 QR 码
+            modules = qr.get_matrix()
+            lines = []
+            # 每两行合并为一行，使用 ▀ ▄ █ 空格 来表示
+            for r in range(0, len(modules), 2):
+                line = ""
+                for c in range(len(modules[0])):
+                    top = modules[r][c]
+                    bot = modules[r + 1][c] if r + 1 < len(modules) else False
+                    if top and bot:
+                        line += "█"
+                    elif top and not bot:
+                        line += "▀"
+                    elif not top and bot:
+                        line += "▄"
+                    else:
+                        line += " "
+                lines.append(line)
+
+            return "\n".join(lines)
+
+        except ImportError as e:
+            logger.warning(f"[XHS QR] ASCII QR 生成依赖缺失: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"[XHS QR] ASCII QR 生成失败: {e}")
+            return None
 
     @staticmethod
     def _extract_expiry(message: str) -> Optional[str]:
@@ -472,13 +530,17 @@ class XiaohongshuPublisher:
                 f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
             )
             output_path = output_dir / filename
-            output_path.write_bytes(base64.b64decode(image_b64))
+            png_bytes = base64.b64decode(image_b64)
+            output_path.write_bytes(png_bytes)
+
+            ascii_qr = self._generate_ascii_qr(png_bytes)
 
             payload = {
                 "success": True,
                 "message": message or "请使用小红书 App 扫码登录",
                 "qr_filename": filename,
                 "qr_image_path": str(output_path.resolve()),
+                "qr_ascii": ascii_qr,
                 "expires_at": self._extract_expiry(message),
             }
             self._save_login_qrcode_meta(payload)

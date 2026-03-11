@@ -111,7 +111,20 @@ async def collect_images_for_publish(
 async def get_xhs_login_qrcode() -> Dict[str, Any]:
     """获取小红书登录二维码信息。"""
     logger.info("[get_xhs_login_qrcode] 获取登录二维码")
-    return await backend_client.get_xhs_login_qrcode()
+    result = await backend_client.get_xhs_login_qrcode()
+
+    # Embed ASCII QR prominently for CLI clients
+    qr_ascii = result.get("qr_ascii")
+    if qr_ascii and result.get("success"):
+        result["cli_display"] = (
+            f"\n{result.get('message', '请使用小红书 App 扫码登录')}\n\n"
+            f"{qr_ascii}\n\n"
+            f"📱 请用小红书 App 扫描上方二维码\n"
+            f"⏱ 过期时间: {result.get('expires_at', '未知')}\n"
+            f"🔗 浏览器预览: {result.get('qr_preview_url', 'N/A')}"
+        )
+
+    return result
 
 
 async def reset_xhs_login() -> Dict[str, Any]:
@@ -420,11 +433,22 @@ async def xhs_login() -> Dict[str, Any]:
         or login_result.get("qr_image_route")
         or login_result.get("qr_image_path")
     ):
-        return {
+        merged = {
             **login_result,
             "login_method": "xhs-mcp",
             "poll_hint": "请在小红书 App 扫码后重新调用 check_xhs_status 确认登录状态；若客户端不显示图片，请打开 qr_image_url、qr_image_route 或 qr_image_path。",
         }
+        # Embed ASCII QR for CLI clients
+        qr_ascii = login_result.get("qr_ascii")
+        if qr_ascii:
+            merged["cli_display"] = (
+                f"\n{login_result.get('message', '请使用小红书 App 扫码登录')}\n\n"
+                f"{qr_ascii}\n\n"
+                f"📱 请用小红书 App 扫描上方二维码\n"
+                f"⏱ 过期时间: {login_result.get('expires_at', '未知')}\n"
+                f"🔗 浏览器预览: {login_result.get('qr_preview_url', 'N/A')}"
+            )
+        return merged
 
     if login_result.get("already_logged_in"):
         return {
