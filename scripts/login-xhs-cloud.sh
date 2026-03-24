@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPRECATED: This cloud login helper belongs to the previous xpzouying/cookie-injection workflow.
+# Prefer the current Docker sidecar flow via `/api/xhs/login-qrcode`, `/api/xhs/check-login-session/{session_id}`, and `/api/xhs/submit-verification`.
 
 set -euo pipefail
 

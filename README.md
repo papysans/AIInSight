@@ -298,18 +298,10 @@ docker compose logs --tail=80 mcp
 
 Apple Silicon 额外说明：
 
-- 上游 `xpzouying/xiaohongshu-mcp:latest-arm64` 当前我实测会因为浏览器自动下载失败而直接返回 `500`
-- 如果你希望继续走 Docker sidecar，又不想依赖 `linux/amd64` 模拟层，可运行 `./scripts/build-xhs-mcp-image.sh`
-- 这个脚本会直接拉取上游源码，本地构建一个 `Debian + Chromium` 的 ARM64 修正版镜像
-- 构建完成后可这样切换：
-
-```bash
-XHS_MCP_IMAGE=aiinsight-xhs-mcp:arm64-patched \
-XHS_MCP_PLATFORM=linux/arm64 \
-XHS_MCP_BROWSER_BIN=/usr/bin/chromium \
-XHS_MCP_SOURCE_TIMEZONE=Asia/Shanghai \
-docker compose up -d --force-recreate api mcp renderer xhs-mcp
-```
+- 当前使用 `@sillyl12324/xhs-mcp` (ShunL12324/xhs-mcp) 作为 XHS MCP sidecar
+- 通过 `Dockerfile.xhs-mcp` 自建镜像（Node.js 20 + Playwright Chromium），原生支持 ARM64
+- 支持短信验证码提交：扫码后如需验证码，调用 `submit_xhs_verification` 工具或 `POST /api/xhs/submit-verification`
+- 数据持久化在 SQLite (`./runtime/xhs/data/data.db`)，容器重启不丢登录态
 
 ## 主要接口
 
@@ -320,6 +312,8 @@ docker compose up -d --force-recreate api mcp renderer xhs-mcp
 - `get_analysis_result`
 - `generate_topic_cards`
 - `publish_to_xhs`
+- `submit_xhs_verification`
+- `check_xhs_login_session`
 - `get_ai_daily`
 - `analyze_ai_topic`
 - `generate_ai_daily_cards`
