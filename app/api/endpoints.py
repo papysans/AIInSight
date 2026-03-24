@@ -528,12 +528,12 @@ async def validate_model(payload: dict):
 
 
 @router.get("/xhs/status")
-async def get_xhs_status():
+async def get_xhs_status(account_id: Optional[str] = None):
     """检查小红书 MCP 服务状态和登录状态"""
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
     from app.schemas import XhsStatusResponse
 
-    status = await xiaohongshu_publisher.get_status()
+    status = await xiaohongshu_publisher.get_status(account_id=account_id)
     return XhsStatusResponse(
         mcp_available=status.get("mcp_available", False),
         login_status=status.get("login_status", False),
@@ -542,11 +542,11 @@ async def get_xhs_status():
 
 
 @router.get("/xhs/login-qrcode", response_model=XhsLoginQrcodeResponse)
-async def get_xhs_login_qrcode(request: Request):
+async def get_xhs_login_qrcode(request: Request, account_id: Optional[str] = None):
     """生成并返回小红书登录二维码信息。"""
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    result = await xiaohongshu_publisher.get_login_qrcode()
+    result = await xiaohongshu_publisher.get_login_qrcode(account_id=account_id)
 
     # xhs-mcp returns already_logged_in=True when user is already logged in
     if result.get("already_logged_in"):
@@ -568,7 +568,11 @@ async def get_xhs_login_qrcode(request: Request):
     # Build preview page URL
     preview_base = _get_xhs_qrcode_public_base_url()
     preview_route = "/api/xhs/login-qrcode/preview"
-    qr_preview_url = f"{preview_base}{preview_route}" if preview_base else str(request.url_for("preview_xhs_login_qrcode"))
+    qr_preview_url = (
+        f"{preview_base}{preview_route}"
+        if preview_base
+        else str(request.url_for("preview_xhs_login_qrcode"))
+    )
 
     return XhsLoginQrcodeResponse(
         success=True,
@@ -579,6 +583,7 @@ async def get_xhs_login_qrcode(request: Request):
         qr_preview_url=qr_preview_url,
         qr_ascii=result.get("qr_ascii"),
         expires_at=result.get("expires_at"),
+        session_id=result.get("session_id"),
     )
 
 
@@ -666,13 +671,36 @@ async def preview_xhs_login_qrcode(request: Request):
 
 
 @router.post("/xhs/login/reset")
-async def reset_xhs_login():
+async def reset_xhs_login(account_id: Optional[str] = None):
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    return await xiaohongshu_publisher.reset_login()
+    return await xiaohongshu_publisher.reset_login(account_id=account_id)
 
 
-@router.post("/xhs/publish")
+@router.post("/xhs/submit-verification")
+async def submit_xhs_verification(request: Request):
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+    from app.schemas import XhsVerificationRequest, XhsVerificationResponse
+
+    body = await request.json()
+    req = XhsVerificationRequest(**body)
+    result = await xiaohongshu_publisher.submit_verification(
+        req.session_id,
+        req.code,
+        account_id=body.get("account_id"),
+    )
+    return XhsVerificationResponse(**result)
+
+
+@router.get("/xhs/check-login-session/{session_id}")
+async def check_xhs_login_session(session_id: str, account_id: Optional[str] = None):
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    return await xiaohongshu_publisher.check_login_session(
+        session_id, account_id=account_id
+    )
+
+
 async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
     """手动发布内容到小红书
 
@@ -695,6 +723,7 @@ async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
         content=request.content,
         images=request.images,
         tags=request.tags,
+        account_id=getattr(request, "account_id", None),
     )
     result = _enrich_xhs_publish_result(http_request, result)
 

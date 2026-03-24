@@ -187,6 +187,7 @@ class BackendClient:
         content: str,
         images: List[str],
         tags: Optional[List[str]] = None,
+        account_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """发布内容到小红书
 
@@ -210,6 +211,8 @@ class BackendClient:
             "images": images,
             "tags": tags or [],
         }
+        if account_id:
+            payload["account_id"] = account_id
 
         logger.info(
             f"[BackendClient] 发布到小红书: title={title[:20]}..., images={len(images)}张"
@@ -250,13 +253,14 @@ class BackendClient:
             logger.exception(f"[BackendClient] 小红书发布异常: {e}")
             return {"success": False, "message": str(e), "data": None}
 
-    async def get_xhs_status(self) -> Dict[str, Any]:
+    async def get_xhs_status(self, account_id: Optional[str] = None) -> Dict[str, Any]:
         """获取小红书 MCP 服务状态和登录状态。"""
         url = f"{self.base_url}/api/xhs/status"
+        params = {"account_id": account_id} if account_id else {}
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.get(url)
+                response = await client.get(url, params=params)
                 data = response.json()
 
                 if response.status_code != 200:
@@ -278,13 +282,16 @@ class BackendClient:
         except Exception as e:
             return {"success": False, "message": str(e)}
 
-    async def get_xhs_login_qrcode(self) -> Dict[str, Any]:
+    async def get_xhs_login_qrcode(
+        self, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """获取小红书登录二维码信息。"""
         url = f"{self.base_url}/api/xhs/login-qrcode"
+        params = {"account_id": account_id} if account_id else {}
 
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                response = await client.get(url)
+                response = await client.get(url, params=params)
                 data = response.json()
 
                 if response.status_code != 200:
@@ -313,12 +320,13 @@ class BackendClient:
                 "message": str(e),
             }
 
-    async def reset_xhs_login(self) -> Dict[str, Any]:
+    async def reset_xhs_login(self, account_id: Optional[str] = None) -> Dict[str, Any]:
         url = f"{self.base_url}/api/xhs/login/reset"
+        params = {"account_id": account_id} if account_id else {}
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(url)
+                response = await client.post(url, params=params)
                 data = response.json()
 
                 if response.status_code != 200:
@@ -333,6 +341,53 @@ class BackendClient:
             return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
         except Exception as e:
             logger.exception(f"[BackendClient] 重置小红书登录异常: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def submit_xhs_verification(
+        self,
+        session_id: str,
+        code: str,
+        account_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}/api/xhs/submit-verification"
+        payload: Dict[str, Any] = {"session_id": session_id, "code": code}
+        if account_id:
+            payload["account_id"] = account_id
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(url, json=payload)
+                data = response.json()
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message")
+                        or f"API 返回 {response.status_code}",
+                    }
+                return data
+        except httpx.ConnectError:
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
+    async def check_xhs_login_session(
+        self, session_id: str, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}/api/xhs/check-login-session/{session_id}"
+        params = {"account_id": account_id} if account_id else {}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(url, params=params)
+                data = response.json()
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message")
+                        or f"API 返回 {response.status_code}",
+                    }
+                return data
+        except httpx.ConnectError:
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
             return {"success": False, "message": str(e)}
 
     # ============================================================

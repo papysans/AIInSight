@@ -76,28 +76,61 @@ def _process_image(image: str) -> str:
 
 
 class XiaohongshuPublisher:
-    """小红书 MCP 发布客户端"""
+    """小红书 MCP 发布客户端 (ShunL12324/xhs-mcp adapter)"""
+
+    # Tool name mapping: internal name → ShunL xhs-mcp tool name
+    _TOOL_NAME_MAP: Dict[str, str] = {
+        "get_login_qrcode": "xhs_add_account",
+        "check_login_status": "xhs_check_auth_status",
+        "publish_content": "xhs_publish_content",
+        "list_feeds": "xhs_list_feeds",
+        "delete_cookies": "xhs_delete_cookies",
+        "search_feeds": "xhs_search",
+        "xhs_add_account": "xhs_add_account",
+        "xhs_check_login_session": "xhs_check_login_session",
+        "xhs_submit_verification": "xhs_submit_verification",
+        "xhs_check_auth_status": "xhs_check_auth_status",
+        "xhs_publish_content": "xhs_publish_content",
+        "xhs_list_feeds": "xhs_list_feeds",
+        "xhs_delete_cookies": "xhs_delete_cookies",
+        "xhs_search": "xhs_search",
+    }
 
     def __init__(self, mcp_url: Optional[str] = None):
         # Resolve the MCP endpoint at instantiation time so compose/env overrides
         # such as the Docker sidecar URL are honored by the shared singleton.
         self.mcp_url = mcp_url or os.getenv("XHS_MCP_URL", "http://xhs-mcp:18060/mcp")
         self._request_id = 0
-        self._login_qrcode_lock = asyncio.Lock()
+        # Per-account locks and session caches for multi-user isolation.
+        # Key: account_id or "_default" when account_id is None.
+        self._login_qrcode_locks: Dict[str, asyncio.Lock] = {}
+        self._login_session_ids: Dict[str, Optional[str]] = {}
+
+    def _get_account_key(self, account_id: Optional[str] = None) -> str:
+        """Map account_id to internal dict key. None → '_default'."""
+        return account_id or "_default"
+
+    def _get_qr_lock(self, account_id: Optional[str] = None) -> asyncio.Lock:
+        """Get or create per-account QR code lock."""
+        key = self._get_account_key(account_id)
+        if key not in self._login_qrcode_locks:
+            self._login_qrcode_locks[key] = asyncio.Lock()
+        return self._login_qrcode_locks[key]
 
     def _next_request_id(self) -> int:
         """生成下一个请求 ID"""
         self._request_id += 1
         return self._request_id
 
-    def _get_login_qrcode_dir(self) -> Path:
+    def _get_login_qrcode_dir(self, account_id: Optional[str] = None) -> Path:
         """返回登录二维码输出目录，并确保目录存在。"""
-        output_dir = Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login"))
+        base = Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login"))
+        output_dir = base / account_id if account_id else base
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir.resolve()
 
-    def _get_login_qrcode_meta_path(self) -> Path:
-        return self._get_login_qrcode_dir() / "latest.json"
+    def _get_login_qrcode_meta_path(self, account_id: Optional[str] = None) -> Path:
+        return self._get_login_qrcode_dir(account_id) / "latest.json"
 
     @staticmethod
     def _get_app_timezone() -> ZoneInfo:
@@ -135,9 +168,11 @@ class XiaohongshuPublisher:
             timeout = 60.0
         return max(5.0, timeout)
 
-    def _load_cached_login_qrcode(self) -> Optional[Dict[str, Any]]:
-        output_dir = self._get_login_qrcode_dir()
-        meta_path = self._get_login_qrcode_meta_path()
+    def _load_cached_login_qrcode(
+        self, account_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        output_dir = self._get_login_qrcode_dir(account_id)
+        meta_path = self._get_login_qrcode_meta_path(account_id)
         meta: Dict[str, Any] = {}
 
         if meta_path.is_file():
@@ -146,6 +181,14 @@ class XiaohongshuPublisher:
             except Exception as exc:
                 logger.debug(f"[XHS MCP] Failed to parse QR metadata: {exc}")
 
+        session_id = str(
+            meta.get("session_id")
+            or self._login_session_ids.get(self._get_account_key(account_id))
+            or ""
+        ).strip()
+        if not meta or not session_id:
+            return None
+
         qr_filename = str(meta.get("qr_filename") or "").strip()
         qr_file: Optional[Path] = None
 
@@ -153,19 +196,6 @@ class XiaohongshuPublisher:
             candidate = (output_dir / qr_filename).resolve()
             if candidate.parent == output_dir and candidate.is_file():
                 qr_file = candidate
-
-        if qr_file is None:
-            candidates = sorted(
-                output_dir.glob("xhs-login-qrcode-*.png"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if candidates:
-                candidate = candidates[0].resolve()
-                if candidate.parent == output_dir and candidate.is_file():
-                    qr_file = candidate
-                    if not qr_filename:
-                        qr_filename = candidate.name
 
         if qr_file is None:
             return None
@@ -189,16 +219,22 @@ class XiaohongshuPublisher:
             "message": meta.get("message") or "请使用小红书 App 扫码登录",
             "qr_filename": qr_filename or qr_file.name,
             "qr_image_path": str(qr_file),
+            "qr_image_url": meta.get("qr_image_url"),
             "qr_ascii": ascii_qr,
             "expires_at": expires_at.isoformat(),
+            "session_id": session_id,
         }
 
-    def _save_login_qrcode_meta(self, payload: Dict[str, Any]) -> None:
-        meta_path = self._get_login_qrcode_meta_path()
+    def _save_login_qrcode_meta(
+        self, payload: Dict[str, Any], account_id: Optional[str] = None
+    ) -> None:
+        meta_path = self._get_login_qrcode_meta_path(account_id)
         meta = {
             "message": payload.get("message", ""),
             "qr_filename": payload.get("qr_filename"),
             "expires_at": payload.get("expires_at"),
+            "session_id": payload.get("session_id"),
+            "qr_image_url": payload.get("qr_image_url"),
             "created_at": datetime.now().isoformat(),
         }
         meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
@@ -295,103 +331,105 @@ class XiaohongshuPublisher:
         except ValueError:
             return None
 
+    @staticmethod
+    def _parse_sse_response(text: str) -> Optional[Dict[str, Any]]:
+        """Parse SSE 'event: message\\ndata: {...}' into a JSON dict."""
+        for line in text.strip().split("\n"):
+            line = line.strip()
+            if line.startswith("data: "):
+                try:
+                    return json.loads(line[6:])
+                except json.JSONDecodeError:
+                    pass
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     async def _call_mcp(
         self,
         tool_name: str,
         arguments: Optional[Dict[str, Any]] = None,
         timeout: float = 60.0,
+        account: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        调用 MCP 工具 (使用 HTTP 批处理模式以确保 Session 初始化)
-
-        Args:
-            tool_name: MCP 工具名称
-            arguments: 工具参数
-            timeout: 超时时间（秒）
-
-        Returns:
-            MCP 响应结果
+        调用 MCP 工具 (StreamableHTTP stateless 模式)。
+        每次调用: initialize → notifications/initialized → tools/call。
         """
-        # 1. Initialize Request
-        init_id = self._next_request_id()
-        init_req = {
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "xiaohongshu-client", "version": "1.0"},
-            },
-            "id": init_id,
+        mapped_name = self._TOOL_NAME_MAP.get(tool_name, tool_name)
+        call_args = dict(arguments or {})
+        if account is not None:
+            call_args["account"] = account
+        mcp_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
         }
 
-        # 2. Initialized Notification
-        initialized_req = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-            "params": {},
-        }
-
-        # 3. Tool Call Request
-        call_id = self._next_request_id()
-        call_req = {
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments or {},
-            },
-            "id": call_id,
-        }
-
-        # Batch Payload
-        payload = [init_req, initialized_req, call_req]
-
-        logger.info(
-            f"[XHS MCP] Calling tool: {tool_name}, batch_mode=True, call_id: {call_id}"
-        )
+        logger.info(f"[XHS MCP] Calling tool: {tool_name} → {mapped_name}")
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
+                # Step 1: initialize
+                init_id = self._next_request_id()
+                init_resp = await client.post(
                     self.mcp_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {},
+                            "clientInfo": {
+                                "name": "xiaohongshu-client",
+                                "version": "1.0",
+                            },
+                        },
+                        "id": init_id,
+                    },
+                    headers=mcp_headers,
                 )
-                response.raise_for_status()
-                results = response.json()
+                init_resp.raise_for_status()
 
-                if not isinstance(results, list):
+                session_id = init_resp.headers.get("mcp-session-id")
+                call_headers = {**mcp_headers}
+                if session_id:
+                    call_headers["Mcp-Session-Id"] = session_id
+
+                # Step 2: notifications/initialized (fire-and-forget)
+                await client.post(
+                    self.mcp_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {},
+                    },
+                    headers=call_headers,
+                )
+
+                # Step 3: tools/call
+                call_id = self._next_request_id()
+                call_resp = await client.post(
+                    self.mcp_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {"name": mapped_name, "arguments": call_args},
+                        "id": call_id,
+                    },
+                    headers=call_headers,
+                )
+                call_resp.raise_for_status()
+
+                parsed = self._parse_sse_response(call_resp.text)
+                if not parsed:
                     return {
                         "success": False,
-                        "error": f"Invalid batch response type: {type(results)}",
+                        "error": f"Failed to parse MCP response: {call_resp.text[:200]}",
                     }
 
-                # Find the result for our tool call
-                tool_result = None
-                for res in results:
-                    if res.get("id") == call_id:
-                        tool_result = res
-                        break
-
-                if not tool_result:
-                    # Check for initialize errors
-                    for res in results:
-                        if "error" in res:
-                            logger.error(
-                                f"[XHS MCP] Batch error (id={res.get('id')}): {res['error']}"
-                            )
-                            return {
-                                "success": False,
-                                "error": f"MCP Error: {res['error'].get('message', res['error'])}",
-                            }
-                    return {
-                        "success": False,
-                        "error": "Tool call response not found in batch",
-                    }
-
-                if "error" in tool_result:
-                    error = tool_result["error"]
+                if "error" in parsed:
+                    error = parsed["error"]
                     logger.error(f"[XHS MCP] Tool Error: {error}")
                     return {
                         "success": False,
@@ -399,8 +437,8 @@ class XiaohongshuPublisher:
                         "code": error.get("code"),
                     }
 
-                logger.info(f"[XHS MCP] Tool {tool_name} succeeded")
-                return {"success": True, "result": tool_result.get("result")}
+                logger.info(f"[XHS MCP] Tool {mapped_name} succeeded")
+                return {"success": True, "result": parsed.get("result")}
 
         except httpx.ConnectError as e:
             logger.error(f"[XHS MCP] Connection error: {e}")
@@ -436,7 +474,10 @@ class XiaohongshuPublisher:
                 response = await client.post(
                     self.mcp_url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                    },
                 )
                 response.raise_for_status()
                 return True
@@ -444,7 +485,9 @@ class XiaohongshuPublisher:
             logger.debug(f"[XHS MCP] Service not available: {e}")
             return False
 
-    async def check_login_status(self) -> Dict[str, Any]:
+    async def check_login_status(
+        self, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         检查小红书登录状态
 
@@ -453,16 +496,24 @@ class XiaohongshuPublisher:
         """
         # The upstream MCP may take >10s to finish browser-backed status checks
         # in Docker mode, so use a wider timeout to avoid false negatives.
-        result = await self._call_mcp("check_login_status", timeout=30.0)
+        result = await self._call_mcp(
+            "check_login_status", timeout=30.0, account=account_id
+        )
 
         if result.get("success"):
-            # 解析 MCP 返回的登录状态
             mcp_result = result.get("result", {})
-            # MCP 返回格式可能是 {"content": [{"type": "text", "text": "..."}]}
             content = mcp_result.get("content", [])
             if content and isinstance(content, list) and len(content) > 0:
                 text = content[0].get("text", "")
-                is_logged_in = "已登录" in text or "logged in" in text.lower()
+                # ShunL returns JSON with a `loggedIn` boolean field.
+                # Parse it instead of substring matching to avoid
+                # "Not logged in" containing "logged in".
+                is_logged_in = False
+                try:
+                    parsed = json.loads(text) if text.strip().startswith("{") else {}
+                    is_logged_in = bool(parsed.get("loggedIn", False))
+                except (json.JSONDecodeError, TypeError):
+                    is_logged_in = False
                 return {
                     "success": True,
                     "logged_in": is_logged_in,
@@ -480,26 +531,25 @@ class XiaohongshuPublisher:
             "message": result.get("error", "登录状态检查失败"),
         }
 
-    async def get_login_qrcode(self) -> Dict[str, Any]:
-        """
-        获取小红书登录二维码，并保存为本地 PNG 文件。
-
-        Returns:
-            包含二维码文件路径、文件名、提示文案和过期时间的字典
-        """
-        cached = self._load_cached_login_qrcode()
+    async def get_login_qrcode(
+        self, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """获取小红书登录二维码 (ShunL xhs-mcp: xhs_add_account)。"""
+        cached = self._load_cached_login_qrcode(account_id=account_id)
         if cached:
             logger.info("[XHS MCP] Reusing cached login QR code")
             return cached
 
-        async with self._login_qrcode_lock:
-            cached = self._load_cached_login_qrcode()
+        async with self._get_qr_lock(account_id):
+            cached = self._load_cached_login_qrcode(account_id=account_id)
             if cached:
                 logger.info("[XHS MCP] Reusing cached login QR code after lock")
                 return cached
 
             result = await self._call_mcp(
-                "get_login_qrcode", timeout=self._get_login_qrcode_timeout()
+                "get_login_qrcode",
+                timeout=self._get_login_qrcode_timeout(),
+                account=account_id,
             )
 
             if not result.get("success"):
@@ -509,45 +559,116 @@ class XiaohongshuPublisher:
                 }
 
             mcp_result = result.get("result", {})
-            message, image_b64 = self._extract_text_and_png(mcp_result.get("content"))
+            content = mcp_result.get("content", [])
 
-            # xhs-mcp returns text-only (no image) when already logged in
-            if not image_b64:
-                already_logged_in = "已登录" in message or "登录状态" in message
+            # ShunL xhs_add_account returns JSON with sessionId + qrCodeUrl
+            # in the text content field
+            text_content = ""
+            image_b64: Optional[str] = None
+            for part in content if isinstance(content, list) else []:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text":
+                    text_content = part.get("text", "")
+                elif (
+                    part.get("type") == "image" and part.get("mimeType") == "image/png"
+                ):
+                    image_b64 = part.get("data")
+
+            # Try to parse ShunL JSON response (sessionId + qrCodeUrl)
+            session_id = None
+            qr_url = None
+            try:
+                parsed = (
+                    json.loads(text_content)
+                    if text_content.strip().startswith("{")
+                    else {}
+                )
+                session_id = parsed.get("sessionId")
+                qr_url = parsed.get("qrCodeUrl") or parsed.get("qr_url")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+            if session_id:
+                self._login_session_ids[self._get_account_key(account_id)] = session_id
+
+            if not qr_url and not image_b64:
+                already_logged_in = (
+                    "已登录" in text_content or "logged" in text_content.lower()
+                )
                 if already_logged_in:
                     return {
                         "success": True,
                         "already_logged_in": True,
-                        "message": message,
+                        "message": text_content,
                     }
                 return {
                     "success": False,
-                    "message": message or "未从 MCP 返回结果中提取到二维码图片",
+                    "message": text_content or "未获取到二维码",
                 }
+
+            png_bytes: Optional[bytes] = None
+            if image_b64:
+                png_bytes = base64.b64decode(image_b64)
+            elif qr_url:
+                try:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.get(qr_url)
+                        resp.raise_for_status()
+                        png_bytes = resp.content
+                except Exception as e:
+                    logger.warning(
+                        f"[XHS MCP] Failed to download QR from {qr_url}: {e}"
+                    )
+
+            if not png_bytes and qr_url:
+                try:
+                    import qrcode
+                    import io
+
+                    qr = qrcode.QRCode(
+                        error_correction=qrcode.constants.ERROR_CORRECT_M
+                    )
+                    qr.add_data(qr_url)
+                    qr.make(fit=True)
+                    img = qr.make_image(fill_color="black", back_color="white")
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    png_bytes = buf.getvalue()
+                except Exception as e:
+                    logger.warning(f"[XHS MCP] Failed to generate QR image: {e}")
 
             output_dir = self._get_login_qrcode_dir()
             filename = (
                 f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
             )
             output_path = output_dir / filename
-            png_bytes = base64.b64decode(image_b64)
-            output_path.write_bytes(png_bytes)
 
-            ascii_qr = self._generate_ascii_qr(png_bytes)
+            if png_bytes:
+                output_path.write_bytes(png_bytes)
+                ascii_qr = self._generate_ascii_qr(png_bytes)
+            else:
+                ascii_qr = None
 
-            payload = {
+            expires = datetime.now(tz=self._get_app_timezone()) + timedelta(minutes=4)
+
+            payload: Dict[str, Any] = {
                 "success": True,
-                "message": message or "请使用小红书 App 扫码登录",
-                "qr_filename": filename,
-                "qr_image_path": str(output_path.resolve()),
+                "message": "请使用小红书 App 扫码登录",
+                "qr_filename": filename if png_bytes else None,
+                "qr_image_path": str(output_path.resolve()) if png_bytes else None,
+                "qr_image_url": qr_url,
                 "qr_ascii": ascii_qr,
-                "expires_at": self._extract_expiry(message),
+                "expires_at": expires.isoformat(),
+                "session_id": session_id,
             }
-            self._save_login_qrcode_meta(payload)
+            self._save_login_qrcode_meta(payload, account_id=account_id)
             return payload
 
-    async def _verify_authenticated_content_access(self) -> Dict[str, Any]:
-        result = await self._call_mcp("list_feeds", timeout=30.0)
+    async def _verify_authenticated_content_access(
+        self, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        result = await self._call_mcp("list_feeds", timeout=30.0, account=account_id)
         if not result.get("success"):
             return {
                 "success": False,
@@ -570,6 +691,7 @@ class XiaohongshuPublisher:
         content: str,
         images: List[str],
         tags: Optional[List[str]] = None,
+        account_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         发布图文内容到小红书
@@ -602,9 +724,9 @@ class XiaohongshuPublisher:
                 "login_required": False,
             }
 
-        login_status = await self.check_login_status()
+        login_status = await self.check_login_status(account_id=account_id)
         if not login_status.get("logged_in"):
-            login_qrcode = await self.get_login_qrcode()
+            login_qrcode = await self.get_login_qrcode(account_id=account_id)
             message = login_status.get("message") or "小红书当前未登录，请扫码后重试"
             response: Dict[str, Any] = {
                 "success": False,
@@ -646,7 +768,8 @@ class XiaohongshuPublisher:
         result = await self._call_mcp(
             "publish_content",
             mcp_args,
-            timeout=120.0,  # 发布可能需要较长时间
+            timeout=120.0,
+            account=account_id,
         )
 
         if result.get("success"):
@@ -660,6 +783,34 @@ class XiaohongshuPublisher:
             ):
                 message = content_list[0].get("text", "")
 
+            inner_success: Optional[bool] = None
+            inner_error = ""
+            try:
+                parsed = json.loads(message) if message.strip().startswith("{") else {}
+                if (
+                    isinstance(parsed, dict)
+                    and "success" in parsed
+                    and parsed.get("success") is False
+                ):
+                    inner_success = False
+                    inner_error = str(parsed.get("error", "") or "")
+                inner_result = (
+                    parsed.get("result") if isinstance(parsed, dict) else None
+                )
+                if isinstance(inner_result, dict) and "success" in inner_result:
+                    inner_success = bool(inner_result.get("success"))
+                    inner_error = str(inner_result.get("error", "") or "")
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+            if inner_success is False:
+                return {
+                    "success": False,
+                    "error": inner_error or "发布失败",
+                    "message": message or inner_error or "发布失败",
+                    "data": mcp_result,
+                }
+
             return {
                 "success": True,
                 "message": message or "发布成功",
@@ -671,7 +822,7 @@ class XiaohongshuPublisher:
             "error": result.get("error", "发布失败"),
         }
 
-    async def get_status(self) -> Dict[str, Any]:
+    async def get_status(self, account_id: Optional[str] = None) -> Dict[str, Any]:
         """
         获取小红书 MCP 服务完整状态
 
@@ -688,13 +839,15 @@ class XiaohongshuPublisher:
             }
 
         # 检查登录状态
-        login_result = await self.check_login_status()
+        login_result = await self.check_login_status(account_id=account_id)
         if login_result.get("logged_in"):
-            probe_result = await self._verify_authenticated_content_access()
+            probe_result = await self._verify_authenticated_content_access(
+                account_id=account_id
+            )
             if not probe_result.get("success"):
                 return {
                     "mcp_available": True,
-                    "login_status": False,
+                    "login_status": True,
                     "message": "登录状态疑似有效，但内容访问校验失败："
                     + probe_result.get("message", "请重新扫码登录"),
                 }
@@ -705,8 +858,10 @@ class XiaohongshuPublisher:
             "message": login_result.get("message", ""),
         }
 
-    async def reset_login(self) -> Dict[str, Any]:
-        result = await self._call_mcp("delete_cookies", timeout=30.0)
+    async def reset_login(self, account_id: Optional[str] = None) -> Dict[str, Any]:
+        result = await self._call_mcp(
+            "delete_cookies", timeout=30.0, account=account_id
+        )
         if not result.get("success"):
             return {
                 "success": False,
@@ -724,9 +879,80 @@ class XiaohongshuPublisher:
             "message": message,
         }
 
-    # ============================================================
-    # Cookie 注入 (Phase 1)
-    # ============================================================
+    async def check_login_session(
+        self, session_id: str, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """轮询扫码登录状态 (ShunL: xhs_check_login_session)。"""
+        result = await self._call_mcp(
+            "xhs_check_login_session",
+            {"sessionId": session_id},
+            timeout=30.0,
+            account=account_id,
+        )
+        if not result.get("success"):
+            return {
+                "success": False,
+                "status": "error",
+                "message": result.get("error", "登录状态检查失败"),
+            }
+
+        mcp_result = result.get("result", {})
+        content = mcp_result.get("content", [])
+        text = ""
+        if content and isinstance(content, list) and len(content) > 0:
+            text = content[0].get("text", "")
+
+        # ShunL returns JSON with a `status` field:
+        # waiting_scan, scanned, verification_required, success, expired, failed
+        parsed_status = None
+        try:
+            parsed = json.loads(text) if text.strip().startswith("{") else {}
+            parsed_status = parsed.get("status")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        if parsed_status == "success":
+            return {"success": True, "status": "logged_in", "message": text}
+        elif parsed_status == "verification_required":
+            return {
+                "success": True,
+                "status": "need_verification",
+                "session_id": session_id,
+                "message": "请查看手机短信，输入收到的验证码",
+            }
+        elif parsed_status in ("expired", "failed"):
+            return {"success": True, "status": parsed_status, "message": text}
+        else:
+            return {"success": True, "status": "pending", "message": text or "等待扫码"}
+
+    async def submit_verification(
+        self, session_id: str, code: str, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """提交短信验证码 (ShunL: xhs_submit_verification)。"""
+        result = await self._call_mcp(
+            "xhs_submit_verification",
+            {"sessionId": session_id, "code": code},
+            timeout=30.0,
+            account=account_id,
+        )
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": result.get("error", "验证码提交失败"),
+            }
+
+        mcp_result = result.get("result", {})
+        content = mcp_result.get("content", [])
+        text = ""
+        if content and isinstance(content, list) and len(content) > 0:
+            text = content[0].get("text", "")
+
+        is_success = "成功" in text or "success" in text.lower()
+        return {
+            "success": is_success,
+            "message": text
+            or ("验证码提交成功，登录完成" if is_success else "验证码提交失败"),
+        }
 
     @staticmethod
     def get_xhs_cookies_path() -> Path:
@@ -876,7 +1102,9 @@ class XiaohongshuPublisher:
     def _get_renderer_url() -> str:
         return os.getenv("RENDERER_SERVICE_URL", "http://localhost:3001")
 
-    async def start_playwright_login(self) -> Dict[str, Any]:
+    async def start_playwright_login(
+        self, account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         通过 renderer 服务启动 Playwright 登录流程，获取小红书 QR 码。
 
@@ -890,21 +1118,19 @@ class XiaohongshuPublisher:
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("success"):
-                    # Save QR image to file for the existing QR serving endpoints
                     image_b64 = data.get("qr_image_data", "")
                     if image_b64:
-                        output_dir = self._get_login_qrcode_dir()
+                        output_dir = self._get_login_qrcode_dir(account_id)
                         filename = f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
                         output_path = output_dir / filename
                         output_path.write_bytes(base64.b64decode(image_b64))
                         data["qr_filename"] = filename
                         data["qr_image_path"] = str(output_path.resolve())
-                        # set a 4-min expiry
                         expires = datetime.now(tz=self._get_app_timezone()) + timedelta(
                             minutes=4
                         )
                         data["expires_at"] = expires.isoformat()
-                        self._save_login_qrcode_meta(data)
+                        self._save_login_qrcode_meta(data, account_id=account_id)
                 return data
         except httpx.ConnectError:
             return {"success": False, "message": "无法连接 renderer 服务"}

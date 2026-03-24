@@ -198,6 +198,16 @@ class XhsLoginQrcodeResponse(BaseModel):
     session_id: Optional[str] = None  # Playwright login session ID
 
 
+class XhsVerificationRequest(BaseModel):
+    session_id: str
+    code: str
+
+
+class XhsVerificationResponse(BaseModel):
+    success: bool
+    message: str
+
+
 # ============================================================
 # AI Daily Pipeline Schemas
 # ============================================================

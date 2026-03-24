@@ -50,6 +50,8 @@ from opinion_mcp.tools import (
     check_xhs_status,
     xhs_login,
     reset_xhs_login,
+    submit_xhs_verification,
+    check_xhs_login_session,
     upload_xhs_cookies,
     get_xhs_login_qrcode_v2,
     poll_xhs_login_v2,
@@ -276,6 +278,38 @@ MCP_TOOLS: List[MCPTool] = [
         inputSchema=MCPToolInput(type="object", properties={}, required=[]),
     ),
     MCPTool(
+        name="submit_xhs_verification",
+        description="提交小红书登录短信验证码。扫码后如果小红书要求短信验证，使用此工具提交验证码完成登录。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "session_id": {
+                    "type": "string",
+                    "description": "登录会话 ID（从 get_xhs_login_qrcode 返回）",
+                },
+                "code": {
+                    "type": "string",
+                    "description": "手机收到的短信验证码",
+                },
+            },
+            required=["session_id", "code"],
+        ),
+    ),
+    MCPTool(
+        name="check_xhs_login_session",
+        description="轮询小红书扫码登录状态。扫码后调用此工具检查是否需要验证码或已登录成功。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "session_id": {
+                    "type": "string",
+                    "description": "登录会话 ID（从 get_xhs_login_qrcode 返回）",
+                },
+            },
+            required=["session_id"],
+        ),
+    ),
+    MCPTool(
         name="publish_to_xhs",
         description="将分析结果发布到小红书",
         inputSchema=MCPToolInput(
@@ -500,6 +534,8 @@ TOOL_HANDLERS = {
     "check_xhs_status": check_xhs_status,
     "xhs_login": xhs_login,
     "reset_xhs_login": reset_xhs_login,
+    "submit_xhs_verification": submit_xhs_verification,
+    "check_xhs_login_session": check_xhs_login_session,
     "upload_xhs_cookies": upload_xhs_cookies,
     "get_xhs_login_qrcode_v2": get_xhs_login_qrcode_v2,
     "poll_xhs_login_v2": poll_xhs_login_v2,
