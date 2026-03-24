@@ -39,9 +39,10 @@ docker compose logs --tail=60 mcp
 - 生成卡片是显式后处理步骤，需要调用 `generate_topic_cards`
 - 只有用户明确确认后，才能调用 `publish_to_xhs`
 - 如果发布失败或返回 `already_published=true`，不要重新调用 `analyze_topic`
-- 如果发布前发现小红书未登录，或发布结果返回 `login_required=true`，先调用 `check_xhs_status` 确认，然后按下方「小红书登录」章节引导用户获取并打开二维码
-- 用户扫码后，再次调用 `check_xhs_status`；确认已登录后再继续发布
+- 如果发布前发现小红书未登录，或发布结果返回 `login_required=true`，先调用 `check_xhs_status`，然后按下方「小红书登录」章节引导用户获取二维码并保留 `session_id`
+- 用户扫码后，优先调用 `check_xhs_login_session(session_id)`；若要求短信验证码，再调用 `submit_xhs_verification(session_id, code)`
 - 用户扫码完成前不要自动重试发布；等待用户确认后再继续
+- 真实发布会对外创建笔记，仍然需要用户明确确认，不要把“登录成功”当成“自动可以发布”
 - 如果 `mcp` 容器日志出现 `ImportError: cannot import name 'reset_xhs_login' from 'opinion_mcp.tools'`，说明当前镜像没有带上最新导出修复，需要重新 `docker compose up -d --build api mcp renderer xhs-mcp`
 
 ## 默认流程
@@ -124,12 +125,14 @@ docker compose logs --tail=60 mcp
 如果用户说“登录小红书”“小红书登录”“扫码登录”，按以下流程：
 
 1. 调用 `check_xhs_status` 检查状态，若已登录则告知无需操作
-2. 若未登录，调用 `get_xhs_login_qrcode`
+2. 若未登录，调用 `get_xhs_login_qrcode` 并保留返回的 `session_id`
 3. 如果客户端能显示图片，直接提示用户用小红书 App 扫码
 4. 如果客户端不能直接显示图片，提示用户打开返回的 `qr_image_url`、`qr_image_route` 或 `qr_image_path`
-5. 用户扫码后，再次调用 `check_xhs_status` 确认登录成功
+5. 用户扫码后，调用 `check_xhs_login_session(session_id)` 检查状态
+6. 若返回需要验证码，调用 `submit_xhs_verification(session_id, code)`
+7. 登录成功后再继续发布链路
 
-对应工具：`check_xhs_status` + `get_xhs_login_qrcode`
+对应工具：`check_xhs_status` + `get_xhs_login_qrcode` + `check_xhs_login_session` + `submit_xhs_verification`
 
 ## 工具
 
@@ -191,6 +194,24 @@ docker compose logs --tail=60 mcp
 ```
 
 若返回中包含 `qr_image_url`、`qr_image_route` 或 `qr_image_path`，应优先把这些信息展示给用户，方便在无法直接显示图片的客户端中手动打开二维码。
+同时保留返回的 `session_id`，用于后续会话轮询和验证码提交。
+
+### check_xhs_login_session
+
+```json
+{
+  "session_id": "sess_xxx"
+}
+```
+
+### submit_xhs_verification
+
+```json
+{
+  "session_id": "sess_xxx",
+  "code": "123456"
+}
+```
 
 ## 来源组说明
 

@@ -60,10 +60,6 @@ When ready to implement, run /opsx-apply
         - `dependencies`: Completed artifacts to read for context
       - Read any completed dependency files for context
       - Create the artifact file using `template` as the structure
-      - Write the artifact content primarily in Chinese by default so it is easy to review in this repository
-        - Keep file paths, code identifiers, and capability names in their required original format (for example kebab-case)
-        - Preserve any required OpenSpec structure from the template, especially checkbox syntax like `- [ ] 1.1` in `tasks.md`
-        - Avoid long English prose unless a technical term or required template token must remain in English
       - Apply `context` and `rules` as constraints - but do NOT copy them into the file
       - Show brief progress: "Created <artifact-id>"
 
@@ -95,8 +91,6 @@ After completing all artifacts, summarize:
 - The schema defines what each artifact should contain - follow it
 - Read dependency artifacts for context before creating new ones
 - Use `template` as the structure for your output file - fill in its sections
-- Default to Chinese for proposal/design/tasks content so the artifacts are easy to review in this repository
-- Keep code, paths, identifiers, kebab-case capability names, and required checkbox/task numbering syntax unchanged where needed
 - **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
   - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
   - These guide what you write, but should never appear in the output
