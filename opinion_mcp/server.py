@@ -1,19 +1,13 @@
 """
-AIInSight MCP Server - AI 话题分析 MCP 服务器主入口
+AIInSight MCP Server - 精简版 MCP 服务器主入口
 
-基于 FastAPI 实现的 MCP 兼容服务器，
-暴露 AI 话题分析工具供 AI 助手调用。
-
-支持两种协议:
-1. 标准 MCP 协议 (SSE + JSON-RPC) - 用于 ClawdBot 等 MCP 客户端
-2. HTTP REST API - 用于直接调用和测试
-
-功能:
-- MCP 工具注册
-- SSE 传输层 (标准 MCP 协议)
-- 健康检查端点
-- 命令行参数解析
-- 优雅关闭处理
+暴露 6 个工具供 AI 助手调用：
+- render_cards: 渲染可视化卡片
+- publish_xhs_note: 发布小红书笔记
+- check_xhs_status: 检查 XHS 状态
+- get_xhs_login_qrcode: 获取登录二维码
+- check_xhs_login_session: 轮询扫码状态
+- submit_xhs_verification: 提交短信验证码
 
 使用方法:
     python -m opinion_mcp.server --port 18061
@@ -28,7 +22,7 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -41,35 +35,15 @@ from opinion_mcp.config import config
 from opinion_mcp.services.api_key_registry import api_key_registry
 from opinion_mcp.services.account_context import get_account_id, set_account_id
 
-# 导入所有工具函数
+# 导入 6 个工具函数
 from opinion_mcp.tools import (
-    analyze_topic,
-    retrieve_and_report,
-    submit_analysis_result,
-    get_analysis_status,
-    get_analysis_result,
-    update_copywriting,
-    generate_topic_cards,
-    get_xhs_login_qrcode,
+    render_cards,
+    publish_xhs_note,
     check_xhs_status,
-    xhs_login,
-    reset_xhs_login,
-    submit_xhs_verification,
+    get_xhs_login_qrcode,
     check_xhs_login_session,
-    upload_xhs_cookies,
-    get_xhs_login_qrcode_v2,
-    poll_xhs_login_v2,
-    publish_to_xhs,
-    get_settings,
-    register_webhook,
-    get_ai_daily,
-    analyze_ai_topic,
-    generate_ai_daily_cards,
-    publish_ai_daily,
-    generate_ai_daily_ranking_cards,
-    publish_ai_daily_ranking,
+    submit_xhs_verification,
 )
-from opinion_mcp.tools.validate_publish import validate_publish
 
 
 # ============================================================
@@ -156,7 +130,7 @@ def _validate_or_resolve_account_id(request: Request):
 
 
 # ============================================================
-# 7.2 初始化 FastAPI 应用 (MCP 兼容)
+# 初始化 FastAPI 应用
 # ============================================================
 
 
@@ -172,12 +146,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AIInSight MCP Server",
-    description="AIInSight AI 话题分析 MCP 服务 - 提供 AI 证据检索、多 Agent 分析、小红书发布等功能",
-    version="1.0.0",
+    description="AIInSight MCP 服务 - 提供卡片渲染和小红书发布功能",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
-# 添加 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -197,174 +170,58 @@ async def inject_account_context(request: Request, call_next):
 
 
 # ============================================================
-# 7.3 注册所有工具 - 工具定义
+# 6 个 MCP 工具定义
 # ============================================================
 
 MCP_TOOLS: List[MCPTool] = [
     MCPTool(
-        name="analyze_topic",
-        description="启动 AI 话题分析任务。启动一个后台任务，立即返回 job_id。分析过程在后台执行，可通过 get_analysis_status 查询进度。",
+        name="render_cards",
+        description="渲染可视化卡片。支持 title/impact/radar/timeline/daily-rank/hot-topic 等卡片类型。返回 output_path 和 image_url（不返回 base64）。",
         inputSchema=MCPToolInput(
             type="object",
             properties={
-                "topic": {"type": "string", "description": "要分析的 AI 话题"},
-                "source_groups": {
+                "specs": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "description": "来源组列表，可选值: media, research, code, community。留空使用全部",
-                },
-                "source_names": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "指定来源列表，如 hn, reddit, aibase 等。与 source_groups 互斥",
-                },
-                "depth": {
-                    "type": "string",
-                    "enum": ["quick", "standard", "deep"],
-                    "default": "standard",
-                    "description": "分析深度: quick(快速)/standard(标准)/deep(深度)",
-                },
-                "debate_rounds": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 5,
-                    "description": "辩论轮数 (0-5)，留空则由 depth 决定",
-                },
-                "image_count": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9,
-                    "default": 0,
-                    "description": "生成图片数量 (0-9)，0表示不生图",
-                },
-            },
-            required=["topic"],
-        ),
-    ),
-    MCPTool(
-        name="retrieve_and_report",
-        description="执行云端前半段分析流程，只做证据检索与记者总结，返回 evidence_bundle、news_content 和 source_stats，供宿主端继续 debate。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "topic": {"type": "string", "description": "要分析的 AI 话题"},
-                "source_groups": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "来源组列表，可选值: media, research, code, community。留空使用全部",
-                },
-                "source_names": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "指定来源列表，如 hn, reddit, aibase 等。与 source_groups 互斥",
-                },
-                "depth": {
-                    "type": "string",
-                    "enum": ["quick", "standard", "deep"],
-                    "default": "standard",
-                    "description": "分析深度: quick(快速)/standard(标准)/deep(深度)",
-                },
-            },
-            required=["topic"],
-        ),
-    ),
-    MCPTool(
-        name="submit_analysis_result",
-        description="提交宿主端 debate 产出的最终分析，继续执行云端后半段流程（writer + image generation + optional publish）。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "topic": {"type": "string", "description": "分析话题"},
-                "news_content": {
-                    "type": "string",
-                    "description": "云端 reporter 生成的事实摘要",
-                },
-                "final_analysis": {
-                    "type": "string",
-                    "description": "宿主端 debate 后的最终分析",
-                },
-                "debate_history": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "宿主端辩论过程记录",
-                },
-                "source_stats": {
-                    "type": "object",
-                    "description": "来源统计信息，如 {source_name: count}",
-                },
-                "image_count": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9,
-                    "default": 0,
-                    "description": "生成图片数量 (0-9)",
-                },
-                "xhs_publish_enabled": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "是否在后半段直接触发 XHS 发布",
-                },
-            },
-            required=[
-                "topic",
-                "news_content",
-                "final_analysis",
-                "debate_history",
-                "source_stats",
-            ],
-        ),
-    ),
-    MCPTool(
-        name="get_analysis_status",
-        description="查询 AI 话题分析任务的当前状态和进度",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "job_id": {
-                    "type": "string",
-                    "description": "任务 ID，由 analyze_topic 返回。留空则查询最近一次任务",
+                    "description": "卡片规格列表，每项包含 card_type 和 payload",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "card_type": {
+                                "type": "string",
+                                "description": "卡片类型: title/impact/radar/timeline/daily-rank/hot-topic",
+                            },
+                            "payload": {
+                                "type": "object",
+                                "description": "卡片渲染参数",
+                            },
+                        },
+                        "required": ["card_type", "payload"],
+                    },
                 }
             },
-            required=[],
+            required=["specs"],
         ),
     ),
     MCPTool(
-        name="get_analysis_result",
-        description="获取已完成的 AI 话题分析结果，包含文案和配图",
+        name="publish_xhs_note",
+        description="发布小红书笔记（接受原始内容，不再接受 job_id）。发布前请先调用 check_xhs_status 确认登录状态。",
         inputSchema=MCPToolInput(
             type="object",
             properties={
-                "job_id": {
-                    "type": "string",
-                    "description": "任务 ID。留空则获取最近一次完成的任务结果",
-                }
-            },
-            required=[],
-        ),
-    ),
-    MCPTool(
-        name="update_copywriting",
-        description="修改分析结果的文案内容",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "job_id": {"type": "string", "description": "任务 ID"},
-                "title": {"type": "string", "description": "新标题（留空则不修改）"},
-                "subtitle": {
-                    "type": "string",
-                    "description": "新副标题（留空则不修改）",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "新正文内容（留空则不修改）",
+                "title": {"type": "string", "description": "笔记标题"},
+                "content": {"type": "string", "description": "笔记正文"},
+                "images": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "图片路径或 URL 列表（至少一张）",
                 },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "新标签列表（留空则不修改）",
+                    "description": "话题标签列表（可选）",
                 },
             },
-            required=["job_id"],
+            required=["title", "content", "images"],
         ),
     ),
     MCPTool(
@@ -378,9 +235,18 @@ MCP_TOOLS: List[MCPTool] = [
         inputSchema=MCPToolInput(type="object", properties={}, required=[]),
     ),
     MCPTool(
-        name="reset_xhs_login",
-        description="重置小红书登录状态。执行后需要重新扫码登录。",
-        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
+        name="check_xhs_login_session",
+        description="轮询小红书扫码登录状态。扫码后调用此工具检查是否需要验证码或已登录成功。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "session_id": {
+                    "type": "string",
+                    "description": "登录会话 ID（从 get_xhs_login_qrcode 返回）",
+                },
+            },
+            required=["session_id"],
+        ),
     ),
     MCPTool(
         name="submit_xhs_verification",
@@ -400,263 +266,16 @@ MCP_TOOLS: List[MCPTool] = [
             required=["session_id", "code"],
         ),
     ),
-    MCPTool(
-        name="check_xhs_login_session",
-        description="轮询小红书扫码登录状态。扫码后调用此工具检查是否需要验证码或已登录成功。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "session_id": {
-                    "type": "string",
-                    "description": "登录会话 ID（从 get_xhs_login_qrcode 返回）",
-                },
-            },
-            required=["session_id"],
-        ),
-    ),
-    MCPTool(
-        name="publish_to_xhs",
-        description="将分析结果发布到小红书",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "job_id": {
-                    "type": "string",
-                    "description": "分析任务 ID，将使用该任务的结果发布",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "自定义标题，留空则使用分析结果的标题",
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "话题标签列表，留空则使用分析结果的标签",
-                },
-            },
-            required=["job_id"],
-        ),
-    ),
-    MCPTool(
-        name="get_settings",
-        description="获取当前的分析配置，包括来源组、深度预设、可用来源等",
-        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
-    ),
-    MCPTool(
-        name="register_webhook",
-        description="注册进度推送的 Webhook URL。MCP Server 会在关键节点主动推送进度到指定 URL。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "callback_url": {"type": "string", "description": "接收进度推送的 URL"},
-                "job_id": {"type": "string", "description": "要监听的任务 ID"},
-            },
-            required=["callback_url", "job_id"],
-        ),
-    ),
-    MCPTool(
-        name="validate_publish",
-        description="验证发布条件是否满足。检查 XHS-MCP 服务状态、任务完成状态、图片 URL 有效性，返回详细验证结果和修复建议。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "job_id": {
-                    "type": "string",
-                    "description": "任务 ID，留空则使用最近完成的任务",
-                }
-            },
-            required=[],
-        ),
-    ),
-    MCPTool(
-        name="generate_topic_cards",
-        description="为已完成的话题分析生成可视化卡片。默认生成标题卡、影响判断卡、证据雷达卡和辩论演化卡，可按需补充热点详情卡。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "job_id": {
-                    "type": "string",
-                    "description": "任务 ID，由 analyze_topic 返回",
-                },
-                "card_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "卡片类型列表: title / impact / radar / timeline / hot-topic，留空使用默认",
-                },
-            },
-            required=["job_id"],
-        ),
-    ),
-    MCPTool(
-        name="get_ai_daily",
-        description="获取今日 AI 日报。从多个数据源（AIbase、机器之心、量子位、GitHub Trending、Product Hunt、HF Papers、TechCrunch）采集 AI 领域新闻，经评分聚合后返回话题列表。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "force_refresh": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "是否强制刷新（忽略缓存），默认 False",
-                },
-                "sources": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "指定数据源列表（aibase/jiqizhixin/qbitai/github_trending/producthunt_ai/hf_papers/techcrunch_ai），留空使用全部",
-                },
-            },
-            required=[],
-        ),
-    ),
-    MCPTool(
-        name="analyze_ai_topic",
-        description="对 AI 日报中的某个话题运行深度分析。使用已有的多角度辩论 workflow 对 AI 话题进行深入解读。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "topic_id": {
-                    "type": "string",
-                    "description": "话题 ID，从 get_ai_daily 返回的 topics 中获取",
-                },
-                "depth": {
-                    "type": "string",
-                    "enum": ["quick", "standard", "deep"],
-                    "default": "standard",
-                    "description": "分析深度: quick(快速) / standard(标准) / deep(深度)",
-                },
-            },
-            required=["topic_id"],
-        ),
-    ),
-    MCPTool(
-        name="generate_ai_daily_cards",
-        description="为 AI 日报话题生成可视化卡片套图，包括标题卡、排行榜卡等。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "topic_id": {"type": "string", "description": "话题 ID"},
-                "card_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "卡片类型列表: title / hot-topic / daily-rank，留空则生成默认套图",
-                },
-            },
-            required=["topic_id"],
-        ),
-    ),
-    MCPTool(
-        name="publish_ai_daily",
-        description="将 AI 日报话题发布到小红书。自动生成卡片图片并调用 XHS-MCP 发布。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "topic_id": {
-                    "type": "string",
-                    "description": "话题 ID（从 get_ai_daily 返回）",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "自定义标题，留空使用话题标题",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "自定义正文，留空使用话题摘要",
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "自定义标签列表",
-                },
-                "card_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "卡片类型列表: title / hot-topic / daily-rank，留空使用默认",
-                },
-            },
-            required=["topic_id"],
-        ),
-    ),
-    MCPTool(
-        name="generate_ai_daily_ranking_cards",
-        description="为今日 AI 热点整榜生成可视化卡片套图，适合做小红书榜单内容。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 10,
-                    "default": 10,
-                    "description": "榜单条数，默认 10",
-                },
-                "title": {"type": "string", "description": "自定义榜单标题"},
-                "card_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "卡片类型列表: title / daily-rank，留空使用默认",
-                },
-            },
-            required=[],
-        ),
-    ),
-    MCPTool(
-        name="publish_ai_daily_ranking",
-        description="将今日 AI 热点整榜发布到小红书。自动生成榜单图并调用 XHS-MCP 发布。",
-        inputSchema=MCPToolInput(
-            type="object",
-            properties={
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 10,
-                    "default": 10,
-                    "description": "榜单条数，默认 10",
-                },
-                "title": {"type": "string", "description": "自定义标题"},
-                "content": {"type": "string", "description": "自定义正文"},
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "自定义标签列表",
-                },
-                "card_types": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "卡片类型列表: title / daily-rank，留空使用默认",
-                },
-            },
-            required=[],
-        ),
-    ),
 ]
 
 # 工具名称到函数的映射
 TOOL_HANDLERS = {
-    "analyze_topic": analyze_topic,
-    "retrieve_and_report": retrieve_and_report,
-    "submit_analysis_result": submit_analysis_result,
-    "get_analysis_status": get_analysis_status,
-    "get_analysis_result": get_analysis_result,
-    "update_copywriting": update_copywriting,
-    "get_xhs_login_qrcode": get_xhs_login_qrcode,
+    "render_cards": render_cards,
+    "publish_xhs_note": publish_xhs_note,
     "check_xhs_status": check_xhs_status,
-    "xhs_login": xhs_login,
-    "reset_xhs_login": reset_xhs_login,
-    "submit_xhs_verification": submit_xhs_verification,
+    "get_xhs_login_qrcode": get_xhs_login_qrcode,
     "check_xhs_login_session": check_xhs_login_session,
-    "upload_xhs_cookies": upload_xhs_cookies,
-    "get_xhs_login_qrcode_v2": get_xhs_login_qrcode_v2,
-    "poll_xhs_login_v2": poll_xhs_login_v2,
-    "publish_to_xhs": publish_to_xhs,
-    "get_settings": get_settings,
-    "register_webhook": register_webhook,
-    "validate_publish": validate_publish,
-    "generate_topic_cards": generate_topic_cards,
-    "get_ai_daily": get_ai_daily,
-    "analyze_ai_topic": analyze_ai_topic,
-    "generate_ai_daily_cards": generate_ai_daily_cards,
-    "publish_ai_daily": publish_ai_daily,
-    "generate_ai_daily_ranking_cards": generate_ai_daily_ranking_cards,
-    "publish_ai_daily_ranking": publish_ai_daily_ranking,
+    "submit_xhs_verification": submit_xhs_verification,
 }
 
 
@@ -671,9 +290,7 @@ _sse_sessions: Dict[str, asyncio.Queue[Dict[str, Any]]] = {}
 def _filter_tool_arguments(
     tool_name: str, handler: Any, arguments: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """
-    仅保留工具函数签名里声明过的参数，忽略客户端附带的保留字段。
-    """
+    """仅保留工具函数签名里声明过的参数，忽略客户端附带的保留字段。"""
     if not arguments:
         return {}
 
@@ -696,22 +313,13 @@ def _filter_tool_arguments(
 async def handle_jsonrpc_request(
     request_data: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    """
-    处理 JSON-RPC 请求
-
-    Args:
-        request_data: JSON-RPC 请求数据
-
-    Returns:
-        JSON-RPC 响应，如果是通知则返回 None
-    """
+    """处理 JSON-RPC 请求"""
     method = request_data.get("method", "")
     params = request_data.get("params", {})
     request_id = request_data.get("id")
 
     logger.debug(f"[MCP] JSON-RPC 请求: method={method}, id={request_id}")
 
-    # 通知消息不需要响应
     if request_id is None:
         return None
 
@@ -719,7 +327,7 @@ async def handle_jsonrpc_request(
         if method == "initialize":
             result = {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "Opinion Analyzer", "version": "1.0.0"},
+                "serverInfo": {"name": "AIInSight MCP", "version": "2.0.0"},
                 "capabilities": {"tools": {"listChanged": False}},
             }
         elif method == "tools/list":
@@ -769,11 +377,7 @@ async def handle_jsonrpc_request(
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
-    """
-    SSE 端点 - 标准 MCP 协议传输层
-
-    客户端通过此端点建立 SSE 连接，接收服务器推送的消息。
-    """
+    """SSE 端点 - 标准 MCP 协议传输层"""
     session_id = str(uuid.uuid4())
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
     _sse_sessions[session_id] = queue
@@ -782,32 +386,26 @@ async def sse_endpoint(request: Request):
 
     async def event_generator():
         try:
-            # 发送 endpoint 事件，告知客户端 POST 消息的地址
             endpoint_event = (
                 f"event: endpoint\ndata: /message?sessionId={session_id}\n\n"
             )
             yield endpoint_event
 
-            # 持续发送队列中的消息
             while True:
                 try:
-                    # 检查客户端是否断开
                     if await request.is_disconnected():
                         break
 
-                    # 等待消息，超时后继续循环检查连接
                     try:
                         message = await asyncio.wait_for(queue.get(), timeout=30.0)
                         yield f"event: message\ndata: {json.dumps(message)}\n\n"
                     except asyncio.TimeoutError:
-                        # 发送心跳
                         yield ": heartbeat\n\n"
 
                 except asyncio.CancelledError:
                     break
 
         finally:
-            # 清理会话
             _sse_sessions.pop(session_id, None)
             logger.info(f"[MCP] SSE 连接关闭: session={session_id}")
 
@@ -824,11 +422,7 @@ async def sse_endpoint(request: Request):
 
 @app.post("/message")
 async def message_endpoint(request: Request, sessionId: Optional[str] = None):
-    """
-    消息端点 - 接收客户端的 JSON-RPC 请求
-
-    客户端通过此端点发送 JSON-RPC 请求，响应通过 SSE 推送。
-    """
+    """消息端点 - 接收客户端的 JSON-RPC 请求"""
     try:
         body = await request.json()
     except Exception as e:
@@ -843,7 +437,6 @@ async def message_endpoint(request: Request, sessionId: Optional[str] = None):
         f"[MCP] 收到消息: session={sessionId}, account={account_id}, body={body}"
     )
 
-    # 支持批量请求
     if isinstance(body, list):
         requests = body
     else:
@@ -855,14 +448,12 @@ async def message_endpoint(request: Request, sessionId: Optional[str] = None):
         if response is not None:
             responses.append(response)
 
-    # 如果有 SSE 会话，通过 SSE 推送响应
     if sessionId and sessionId in _sse_sessions:
         queue = _sse_sessions[sessionId]
         for resp in responses:
             await queue.put(resp)
         return {"status": "accepted"}
 
-    # 否则直接返回响应
     if len(responses) == 1:
         return responses[0]
     return responses
@@ -870,9 +461,7 @@ async def message_endpoint(request: Request, sessionId: Optional[str] = None):
 
 @app.post("/mcp")
 async def mcp_post_endpoint(request: Request):
-    """
-    MCP POST 端点 - 兼容直接 POST JSON-RPC 请求
-    """
+    """MCP POST 端点 - 兼容直接 POST JSON-RPC 请求"""
     try:
         body = await request.json()
     except Exception as e:
@@ -884,7 +473,6 @@ async def mcp_post_endpoint(request: Request):
         raise resolved
     set_account_id(resolved)
 
-    # 支持批量请求
     if isinstance(body, list):
         requests = body
     else:
@@ -905,24 +493,23 @@ async def mcp_post_endpoint(request: Request):
 async def mcp_info():
     """MCP 服务信息端点"""
     return {
-        "name": "Opinion Analyzer",
-        "version": "1.0.0",
+        "name": "AIInSight MCP",
+        "version": "2.0.0",
         "protocolVersion": "2024-11-05",
-        "description": "GlobalInSight 舆论分析 MCP 服务",
+        "description": "AIInSight MCP 服务 - 卡片渲染 + 小红书发布",
         "transport": "sse",
         "endpoints": {"sse": "/sse", "message": "/message"},
     }
 
 
-# 根路径处理 - 兼容 mcporter 等客户端
 @app.get("/")
 async def root_get():
     """根路径 GET - 返回服务信息"""
     return {
-        "name": "Opinion Analyzer",
-        "version": "1.0.0",
+        "name": "AIInSight MCP",
+        "version": "2.0.0",
         "protocolVersion": "2024-11-05",
-        "description": "GlobalInSight 舆论分析 MCP 服务",
+        "description": "AIInSight MCP 服务 - 卡片渲染 + 小红书发布",
         "transport": "sse",
         "endpoints": {"sse": "/sse", "message": "/message", "mcp": "/mcp"},
     }
@@ -942,7 +529,6 @@ async def root_post(request: Request):
         raise resolved
     set_account_id(resolved)
 
-    # 支持批量请求
     if isinstance(body, list):
         requests = body
     else:
@@ -964,7 +550,7 @@ async def mcp_initialize() -> MCPInitializeResponse:
     """MCP 初始化端点 (HTTP 模式)"""
     return MCPInitializeResponse(
         serverInfo=MCPServerInfo(
-            name="Opinion Analyzer", version="1.0.0", protocolVersion="2024-11-05"
+            name="AIInSight MCP", version="2.0.0", protocolVersion="2024-11-05"
         ),
         capabilities={
             "tools": {"listChanged": False},
@@ -988,7 +574,6 @@ async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
 
     logger.info(f"[MCP] 调用工具: {tool_name}, 参数: {arguments}")
 
-    # 查找工具处理函数
     handler = TOOL_HANDLERS.get(tool_name)
     if not handler:
         logger.error(f"[MCP] 未知工具: {tool_name}")
@@ -1000,9 +585,7 @@ async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
         filtered_arguments = _filter_tool_arguments(tool_name, handler, arguments)
         result = await handler(**filtered_arguments)
 
-        # 格式化响应
         result_text = json.dumps(result, ensure_ascii=False, indent=2)
-
         logger.info(f"[MCP] 工具 {tool_name} 执行成功")
 
         return MCPCallToolResponse(
@@ -1017,17 +600,13 @@ async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
 
 
 # ============================================================
-# 7.4 实现健康检查端点
+# 健康检查端点
 # ============================================================
 
 
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
-    """
-    健康检查端点
-
-    返回服务器状态信息，用于监控和负载均衡。
-    """
+    """健康检查端点"""
     uptime_seconds = None
     if _server_started_at:
         uptime_seconds = (datetime.now() - _server_started_at).total_seconds()
@@ -1035,7 +614,7 @@ async def health_check() -> Dict[str, Any]:
     return {
         "status": "healthy",
         "service": "AIInSight MCP Server",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "started_at": _server_started_at.isoformat() if _server_started_at else None,
         "uptime_seconds": round(uptime_seconds, 2) if uptime_seconds else None,
         "available_tools": [tool.name for tool in MCP_TOOLS],
@@ -1055,58 +634,8 @@ async def readiness_check() -> Dict[str, Any]:
 
 
 # ============================================================
-# 直接 API 端点 (便于测试和兼容)
+# Admin API Keys 管理
 # ============================================================
-
-
-# 请求体模型
-class AnalyzeTopicRequest(BaseModel):
-    """分析话题请求体"""
-
-    topic: str
-    source_groups: Optional[List[str]] = None
-    source_names: Optional[List[str]] = None
-    depth: str = "standard"
-    debate_rounds: Optional[int] = None
-    image_count: int = 0
-    account_id: Optional[str] = None
-
-
-class JobIdRequest(BaseModel):
-    """任务 ID 请求体"""
-
-    job_id: Optional[str] = None
-
-
-class HotNewsRequest(BaseModel):
-    """AI 日报请求体（兼容旧路由名）"""
-
-    force_refresh: bool = False
-    sources: Optional[List[str]] = None
-
-
-class PublishXhsRequest(BaseModel):
-    """发布小红书请求体"""
-
-    job_id: str
-    title: Optional[str] = None
-    tags: Optional[List[str]] = None
-    account_id: Optional[str] = None
-
-
-@app.post("/get_xhs_login_qrcode")
-@app.get("/get_xhs_login_qrcode")
-async def direct_get_xhs_login_qrcode() -> Dict[str, Any]:
-    """直接获取小红书登录二维码"""
-    return await get_xhs_login_qrcode()
-
-
-class WebhookRequest(BaseModel):
-    """Webhook 注册请求体"""
-
-    callback_url: str
-    job_id: str
-    account_id: Optional[str] = None
 
 
 class ApiKeyCreateRequest(BaseModel):
@@ -1116,147 +645,6 @@ class ApiKeyCreateRequest(BaseModel):
 
 class ApiKeyRevokeRequest(BaseModel):
     api_key: str
-
-
-class UpdateCopywritingRequest(BaseModel):
-    """更新文案请求体"""
-
-    job_id: str
-    title: Optional[str] = None
-    subtitle: Optional[str] = None
-    content: Optional[str] = None
-    tags: Optional[List[str]] = None
-
-
-# 兼容直接调用工具名的端点
-@app.post("/analyze_topic")
-async def direct_analyze_topic_post(body: AnalyzeTopicRequest) -> Dict[str, Any]:
-    """直接调用分析工具（POST 请求）"""
-    return await analyze_topic(
-        topic=body.topic,
-        source_groups=body.source_groups,
-        source_names=body.source_names,
-        depth=body.depth,
-        debate_rounds=body.debate_rounds,
-        image_count=body.image_count,
-        account_id=body.account_id,
-    )
-
-
-@app.get("/analyze_topic")
-async def direct_analyze_topic_get(
-    topic: str,
-    source_groups: Optional[str] = None,
-    source_names: Optional[str] = None,
-    depth: str = "standard",
-    debate_rounds: Optional[int] = None,
-    image_count: int = 0,
-) -> Dict[str, Any]:
-    """直接调用分析工具（GET 请求）"""
-    group_list = (
-        [g.strip() for g in source_groups.split(",") if g.strip()]
-        if source_groups
-        else None
-    )
-    source_list = (
-        [s.strip() for s in source_names.split(",") if s.strip()]
-        if source_names
-        else None
-    )
-
-    return await analyze_topic(
-        topic=topic,
-        source_groups=group_list,
-        source_names=source_list,
-        depth=depth,
-        debate_rounds=debate_rounds,
-        image_count=image_count,
-    )
-
-
-@app.post("/get_analysis_status")
-async def direct_get_status_post(body: JobIdRequest) -> Dict[str, Any]:
-    """直接查询状态（POST 请求）"""
-    return await get_analysis_status(job_id=body.job_id)
-
-
-@app.get("/get_analysis_status")
-async def direct_get_status_get(job_id: Optional[str] = None) -> Dict[str, Any]:
-    """直接查询状态（GET 请求 - 查询参数）"""
-    return await get_analysis_status(job_id=job_id)
-
-
-@app.get("/get_analysis_status/{job_id}")
-async def direct_get_status_path(job_id: str) -> Dict[str, Any]:
-    """直接查询状态（GET 请求 - 路径参数）"""
-    return await get_analysis_status(job_id=job_id)
-
-
-@app.post("/get_analysis_result")
-async def direct_get_result_post(body: JobIdRequest) -> Dict[str, Any]:
-    """直接获取结果（POST 请求）"""
-    return await get_analysis_result(job_id=body.job_id)
-
-
-@app.get("/get_analysis_result")
-async def direct_get_result_get(job_id: Optional[str] = None) -> Dict[str, Any]:
-    """直接获取结果（GET 请求 - 查询参数）"""
-    return await get_analysis_result(job_id=job_id)
-
-
-@app.get("/get_analysis_result/{job_id}")
-async def direct_get_result_path(job_id: str) -> Dict[str, Any]:
-    """直接获取结果（GET 请求 - 路径参数）"""
-    return await get_analysis_result(job_id=job_id)
-
-
-@app.post("/get_hot_news")
-async def direct_get_hotnews_post(body: HotNewsRequest) -> Dict[str, Any]:
-    """直接获取 AI 日报（POST 请求，兼容旧路由名）"""
-    return await get_ai_daily(
-        force_refresh=body.force_refresh,
-        sources=body.sources,
-    )
-
-
-@app.get("/get_hot_news")
-async def direct_get_hotnews_get(
-    force_refresh: bool = False,
-    sources: Optional[str] = None,
-) -> Dict[str, Any]:
-    """直接获取 AI 日报（GET 请求，兼容旧路由名）"""
-    source_list = (
-        [s.strip() for s in sources.split(",") if s.strip()] if sources else None
-    )
-    return await get_ai_daily(force_refresh=force_refresh, sources=source_list)
-
-
-@app.post("/get_settings")
-@app.get("/get_settings")
-async def direct_get_settings() -> Dict[str, Any]:
-    """直接获取设置（兼容端点）"""
-    return await get_settings()
-
-
-@app.post("/publish_to_xhs")
-async def direct_publish_xhs(body: PublishXhsRequest) -> Dict[str, Any]:
-    """直接发布到小红书"""
-    return await publish_to_xhs(
-        job_id=body.job_id,
-        title=body.title,
-        tags=body.tags,
-        account_id=body.account_id,
-    )
-
-
-@app.post("/register_webhook")
-async def direct_register_webhook(body: WebhookRequest) -> Dict[str, Any]:
-    """直接注册 Webhook"""
-    return await register_webhook(
-        callback_url=body.callback_url,
-        job_id=body.job_id,
-        account_id=body.account_id,
-    )
 
 
 @app.post("/admin/api-keys")
@@ -1281,113 +669,22 @@ async def revoke_api_key(body: ApiKeyRevokeRequest) -> Dict[str, Any]:
     }
 
 
-@app.post("/update_copywriting")
-async def direct_update_copywriting(body: UpdateCopywritingRequest) -> Dict[str, Any]:
-    """直接更新文案"""
-    return await update_copywriting(
-        job_id=body.job_id,
-        title=body.title,
-        subtitle=body.subtitle,
-        content=body.content,
-        tags=body.tags,
-    )
-
-
-class ValidatePublishRequest(BaseModel):
-    """发布验证请求体"""
-
-    job_id: Optional[str] = None
-
-
-@app.post("/validate_publish")
-async def direct_validate_publish(body: ValidatePublishRequest) -> Dict[str, Any]:
-    """直接验证发布条件"""
-    return await validate_publish(job_id=body.job_id)
-
-
-@app.get("/validate_publish")
-async def direct_validate_publish_get(job_id: Optional[str] = None) -> Dict[str, Any]:
-    """直接验证发布条件（GET 请求）"""
-    return await validate_publish(job_id=job_id)
-
-
-@app.get("/validate_publish/{job_id}")
-async def direct_validate_publish_path(job_id: str) -> Dict[str, Any]:
-    """直接验证发布条件（路径参数）"""
-    return await validate_publish(job_id=job_id)
-
-
-# 原有的 /api/ 前缀端点
-@app.post("/api/analyze")
-async def api_analyze_topic(
-    topic: str,
-    source_groups: Optional[List[str]] = None,
-    source_names: Optional[List[str]] = None,
-    depth: str = "standard",
-    debate_rounds: Optional[int] = None,
-    image_count: int = 0,
-) -> Dict[str, Any]:
-    """直接调用分析工具"""
-    return await analyze_topic(
-        topic=topic,
-        source_groups=source_groups,
-        source_names=source_names,
-        depth=depth,
-        debate_rounds=debate_rounds,
-        image_count=image_count,
-    )
-
-
-@app.get("/api/status")
-@app.get("/api/status/{job_id}")
-async def api_get_status(job_id: Optional[str] = None) -> Dict[str, Any]:
-    """直接查询状态"""
-    return await get_analysis_status(job_id=job_id)
-
-
-@app.get("/api/result")
-@app.get("/api/result/{job_id}")
-async def api_get_result(job_id: Optional[str] = None) -> Dict[str, Any]:
-    """直接获取结果"""
-    return await get_analysis_result(job_id=job_id)
-
-
-@app.get("/api/hotnews")
-async def api_get_hotnews(
-    force_refresh: bool = False,
-    sources: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """直接获取 AI 日报（兼容旧路由名）"""
-    return await get_ai_daily(force_refresh=force_refresh, sources=sources)
-
-
-@app.get("/api/settings")
-async def api_get_settings() -> Dict[str, Any]:
-    """直接获取设置"""
-    return await get_settings()
+# XHS 二维码便捷端点（保留兼容性）
+@app.post("/get_xhs_login_qrcode")
+@app.get("/get_xhs_login_qrcode")
+async def direct_get_xhs_login_qrcode() -> Dict[str, Any]:
+    """直接获取小红书登录二维码"""
+    return await get_xhs_login_qrcode()
 
 
 # ============================================================
-# 7.5 实现命令行参数解析 (--port)
+# 命令行参数解析与主入口
 # ============================================================
 
 
 def parse_args() -> argparse.Namespace:
-    """
-    解析命令行参数
-
-    Returns:
-        解析后的参数命名空间
-    """
     parser = argparse.ArgumentParser(
-        description="AIInSight MCP Server - AI 话题分析 MCP 服务",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-    python -m opinion_mcp.server                    # 使用默认端口 18061
-    python -m opinion_mcp.server --port 18062      # 使用自定义端口
-    python -m opinion_mcp.server --host 0.0.0.0    # 监听所有接口
-        """,
+        description="AIInSight MCP Server - 卡片渲染 + 小红书发布 MCP 服务",
     )
 
     parser.add_argument(
@@ -1413,46 +710,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# ============================================================
-# 7.6 实现优雅关闭处理
-# ============================================================
-
-
 def setup_signal_handlers() -> None:
-    """
-    设置信号处理器，支持优雅关闭
-    """
     global _shutdown_event
     _shutdown_event = asyncio.Event()
 
     def signal_handler(signum, frame):
-        """信号处理函数"""
         sig_name = signal.Signals(signum).name
         logger.info(f"收到信号 {sig_name}，正在优雅关闭...")
-
         if _shutdown_event:
             _shutdown_event.set()
 
-    # 注册信号处理器
     signal.signal(signal.SIGINT, signal_handler)
-
-    # Unix 系统额外处理 SIGTERM
     if sys.platform != "win32":
         signal.signal(signal.SIGTERM, signal_handler)
 
-    logger.debug("信号处理器已设置")
-
 
 def log_startup_info(host: str, port: int) -> None:
-    """
-    记录启动信息
-
-    Args:
-        host: 服务器主机
-        port: 服务器端口
-    """
     tools = [tool.name for tool in MCP_TOOLS]
-
     logger.info("=" * 60)
     logger.info("AIInSight MCP Server 启动")
     logger.info("=" * 60)
@@ -1466,19 +740,9 @@ def log_startup_info(host: str, port: int) -> None:
     logger.info("=" * 60)
 
 
-# ============================================================
-# 主入口
-# ============================================================
-
-
 def main() -> None:
-    """
-    MCP 服务器主入口
-    """
-    # 解析命令行参数
     args = parse_args()
 
-    # 配置日志级别
     if args.debug:
         logger.remove()
         logger.add(sys.stderr, level="DEBUG")
@@ -1486,14 +750,10 @@ def main() -> None:
         logger.remove()
         logger.add(sys.stderr, level="INFO")
 
-    # 设置信号处理器
     setup_signal_handlers()
-
-    # 记录启动信息
     log_startup_info(args.host, args.port)
 
     try:
-        # 运行 FastAPI 服务器
         uvicorn.run(
             app,
             host=args.host,
