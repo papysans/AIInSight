@@ -75,13 +75,10 @@ cd renderer && npm install && npx playwright install chromium
 ### 3. 启动服务
 
 ```bash
-# 终端 1：启动后端 (8000)
-uvicorn app.main:app --reload --port 8000
+# 终端 1：启动 MCP Server (18061)
+python -m opinion_mcp.server --host 0.0.0.0 --port 18061
 
-# 终端 2：启动前端 (5173)
-npm run dev
-
-# 终端 3：启动渲染器 (3001)
+# 终端 2：启动渲染器 (3001)
 cd renderer && npm start
 ```
 
@@ -89,16 +86,15 @@ cd renderer && npm start
 
 ## 快速开始
 
-### 一键采集 AI 日报
+### 通过 MCP 工具调用
+
+当前系统已移除 REST API 层，所有功能通过 MCP 工具暴露。推荐使用 Docker 部署后通过 Claude / Claude Code 的 Skill 调用。
+
+MCP 健康检查：
 
 ```bash
-# 1. 采集（首次或强制刷新）
-curl -X POST http://localhost:8000/api/ai-daily/collect \
-  -H "Content-Type: application/json" \
-  -d '{"force_refresh": true}'
-
-# 2. 查看今日日报（使用缓存）
-curl http://localhost:8000/api/ai-daily
+curl http://localhost:18061/health
+```
 ```
 
 返回示例：
@@ -122,34 +118,17 @@ curl http://localhost:8000/api/ai-daily
 
 ### 指定数据源
 
-```bash
-curl -X POST http://localhost:8000/api/ai-daily/collect \
-  -H "Content-Type: application/json" \
-  -d '{"sources": ["github_trending", "hf_papers"]}'
-```
+> **注意**：以下功能已迁移至 Skill 侧控制，不再通过 REST API 直接调用。
+> 请使用 Claude / Claude Code 中的 `ai-insight` 或 `ai-topic-analyzer` Skill。
 
-### 深度分析某个话题
+### 渲染卡片示例（通过 MCP）
 
 ```bash
-curl -X POST http://localhost:8000/api/ai-daily/cluster_abc123/analyze \
+# 初始化 MCP 会话并调用 render_cards
+curl -s -X POST http://localhost:18061/mcp \
   -H "Content-Type: application/json" \
-  -d '{"depth": "deep"}'
-```
-
-### 生成卡片
-
-```bash
-curl -X POST http://localhost:8000/api/ai-daily/cluster_abc123/cards \
-  -H "Content-Type: application/json" \
-  -d '{"card_types": ["title", "daily-rank"]}'
-```
-
-### 发布到小红书
-
-```bash
-curl -X POST http://localhost:8000/api/ai-daily/cluster_abc123/publish \
-  -H "Content-Type: application/json" \
-  -d '{"tags": ["AI日报", "科技"], "card_types": ["title", "daily-rank"]}'
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":1}'
 ```
 
 ---
@@ -354,8 +333,8 @@ curl http://localhost:3001/healthz
 ### 使用 docker-compose
 
 ```bash
-# main 分支推荐：重建并启动完整四容器栈
-docker compose up -d --build api mcp renderer xhs-mcp
+# 重建并启动完整三容器栈
+docker compose up -d --build mcp renderer xhs-mcp
 
 # 查看日志
 docker compose logs -f
@@ -366,53 +345,33 @@ docker compose down
 
 ### 当前 Docker 栈
 
-当前默认部署使用以下 **4 个容器**：
+当前默认部署使用以下 **3 个容器**：
 
 ```bash
-docker compose up -d api mcp renderer xhs-mcp
+docker compose up -d mcp renderer xhs-mcp
 ```
 
-- `api`：FastAPI 后端，默认端口 `8000`
-- `mcp`：MCP / 兼容 HTTP 服务，默认端口 `18061`
+- `mcp`：Opinion MCP Server，默认端口 `18061`，直连 renderer 和 xhs-mcp
 - `renderer`：Playwright 渲染服务，默认端口 `3001`
 - `xhs-mcp`：小红书 sidecar，默认端口 `18060`
-
-Reddit 仅在配置好凭证时启用；缺失时会自动跳过，不影响任务成功。
 
 ### 服务端口
 
 | 服务 | 端口 | 说明 |
 |------|------|------|
-| api | 8000 | FastAPI 后端 |
+| mcp | 18061 | Opinion MCP Server |
 | renderer | 3001 | Playwright 截图服务 |
-| mcp | 18061 | MCP / 兼容 HTTP 服务 |
 | xhs-mcp | 18060 | 小红书 sidecar |
 
 ### 常见启动与排障
 
-#### 先确认四个服务都起来了
+#### 先确认三个服务都起来了
 
 ```bash
 docker compose ps
 ```
 
-期望看到：`api / mcp / renderer / xhs-mcp` 都是 `Up`。
-
-#### `api` 启动失败，提示 8000 端口被占用
-
-症状：
-
-```text
-Bind for 0.0.0.0:8000 failed: port is already allocated
-```
-
-这通常表示旧的 worktree 项目容器还在占端口。先检查：
-
-```bash
-docker ps --format "table {{.Names}}\t{{.Ports}}"
-```
-
-然后停止旧的 `*-api-1` / `*-mcp-1` / `*-renderer-1` 容器，再重新执行四容器启动命令。
+期望看到：`mcp / renderer / xhs-mcp` 都是 `Up`。
 
 #### `mcp` 容器起不来
 
@@ -431,7 +390,7 @@ ImportError: cannot import name 'reset_xhs_login' from 'opinion_mcp.tools'
 说明镜像没有带上最新代码，重新执行：
 
 ```bash
-docker compose up -d --build api mcp renderer xhs-mcp
+docker compose up -d --build mcp renderer xhs-mcp
 ```
 
 ### 环境变量

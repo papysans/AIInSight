@@ -17,11 +17,10 @@
 
 > 说明：本文中凡提到旧的 `opinion-analyzer`、`platforms`、国内平台抓取或登录容器，均属于历史设计。当前单话题链路应以 `ai-topic-analyzer`、AI 来源组和 evidence-first 工作流为准。
 
-系统设计上分为三层：
+系统设计上分为两层：
 
-- `Skill`：定义 Claude 在不同场景下应该走什么流程
-- `MCP`：向 Claude 暴露可调用工具
-- `Backend / Renderer / Publisher`：真正完成采集、分析、卡片渲染和发布
+- `Skill`：定义 Claude 在不同场景下应该走什么流程（host 侧推理控制）
+- `MCP`：向 Claude 暴露纯能力工具（渲染、发布、登录管理）
 
 ---
 
@@ -289,37 +288,30 @@
 
 ## 5. 当前 MCP 工具一览
 
-项目当前通过 AIInSight MCP 工具集对 Claude 暴露两大类能力。
+项目当前通过 AIInSight MCP Server v2.0.0 对 Claude 暴露 6 个纯能力工具。
 
-### 5.1 AI 日报相关工具
-
-| 工具名 | 作用 | 典型场景 |
-|------|------|------|
-| `get_ai_daily` | 获取今日 AI 榜单 | 查看今日日报 |
-| `analyze_ai_topic` | 深度分析 AI 榜单中的单条话题 | 分析榜单第 N 条 |
-| `generate_ai_daily_cards` | 为单条 AI 话题生成卡片 | 单条热点出图 |
-| `publish_ai_daily` | 发布单条 AI 热点到小红书 | 单条热点发布 |
-| `generate_ai_daily_ranking_cards` | 为今日整榜生成卡片 | 今日榜单出图 |
-| `publish_ai_daily_ranking` | 发布今日整榜到小红书 | 今日榜单发布 |
-
-### 5.2 热点辩论相关工具
+### 5.1 渲染工具
 
 | 工具名 | 作用 | 典型场景 |
 |------|------|------|
-| `analyze_topic` | 启动一个多平台分析任务 | 任意热点分析 |
-| `get_analysis_status` | 查询分析任务状态 | 轮询进度 |
-| `get_analysis_result` | 获取分析结果 | 预览文案和卡片 |
-| `update_copywriting` | 修改结果文案 | 二次编辑 |
-| `publish_to_xhs` | 发布分析结果到小红书 | 辩论链路发布 |
+| `render_cards` | 渲染可视化卡片 | 生成 title / hot-topic / daily-rank / radar / timeline / trend 卡片 |
 
-### 5.3 其他辅助工具
+### 5.2 发布工具
 
-| 工具名 | 作用 |
-|------|------|
-| `get_hot_news` | 获取热榜数据 |
-| `get_settings` | 获取默认配置与平台设置 |
-| `register_webhook` | 注册任务回调 |
-| `validate_publish` | 检查发布前条件 |
+| 工具名 | 作用 | 典型场景 |
+|------|------|------|
+| `publish_xhs_note` | 发布图文到小红书 | 确认后发布笔记 |
+
+### 5.3 登录管理工具
+
+| 工具名 | 作用 | 典型场景 |
+|------|------|------|
+| `check_xhs_status` | 检查 MCP 服务可用性和登录状态 | 发布前检查 |
+| `get_xhs_login_qrcode` | 获取小红书登录二维码 | 未登录时扫码 |
+| `check_xhs_login_session` | 轮询扫码登录状态 | 等待用户扫码 |
+| `submit_xhs_verification` | 提交短信验证码 | 扫码后需要验证 |
+
+> 注意：所有推理逻辑（采集、分析、文案生成）已移至 host 侧 Skill，MCP 仅提供能力层。
 
 ---
 
