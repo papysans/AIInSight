@@ -30,6 +30,13 @@ class BackendClient:
         self.base_url = (base_url or config.BACKEND_URL).rstrip("/")
         logger.info(f"[BackendClient] 初始化，后端地址: {self.base_url}")
 
+    @staticmethod
+    def _headers(account_id: Optional[str] = None) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if account_id:
+            headers["X-Account-Id"] = account_id
+        return headers
+
     # ============================================================
     # 2.2 调用 /api/analyze (SSE 流式)
     # ============================================================
@@ -42,6 +49,7 @@ class BackendClient:
         depth: str = "standard",
         debate_rounds: Optional[int] = None,
         image_count: int = 0,
+        account_id: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """调用后端分析 API (SSE 流式)
 
@@ -59,7 +67,7 @@ class BackendClient:
         url = f"{self.base_url}/api/analyze"
 
         # 构建请求体
-        payload = {
+        payload: Dict[str, Any] = {
             "topic": topic,
             "depth": depth,
             "image_count": image_count,
@@ -80,7 +88,7 @@ class BackendClient:
                     "POST",
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers=self._headers(account_id),
                 ) as response:
                     if response.status_code != 200:
                         error_text = await response.aread()
@@ -176,6 +184,81 @@ class BackendClient:
         except Exception as e:
             logger.exception(f"[BackendClient] 获取工作流状态异常: {e}")
             return {"success": False, "running": False, "error": str(e)}
+
+    async def retrieve_and_report(
+        self,
+        topic: str,
+        source_groups: Optional[List[str]] = None,
+        source_names: Optional[List[str]] = None,
+        depth: str = "standard",
+        account_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}/api/retrieve-and-report"
+        payload: Dict[str, Any] = {"topic": topic, "depth": depth}
+        if source_groups:
+            payload["source_groups"] = source_groups
+        if source_names:
+            payload["source_names"] = source_names
+
+        try:
+            async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    url, json=payload, headers=self._headers(account_id)
+                )
+                data = response.json()
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message")
+                        or f"API 返回 {response.status_code}",
+                    }
+                return data
+        except httpx.ConnectError:
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
+            logger.exception(f"[BackendClient] retrieve_and_report 异常: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def submit_analysis_result(
+        self,
+        topic: str,
+        news_content: str,
+        final_analysis: str,
+        debate_history: List[str],
+        source_stats: Dict[str, int],
+        image_count: int = 0,
+        xhs_publish_enabled: bool = False,
+        account_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.base_url}/api/submit-analysis-result"
+        payload: Dict[str, Any] = {
+            "topic": topic,
+            "news_content": news_content,
+            "final_analysis": final_analysis,
+            "debate_history": debate_history,
+            "source_stats": source_stats,
+            "image_count": image_count,
+            "xhs_publish_enabled": xhs_publish_enabled,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    url, json=payload, headers=self._headers(account_id)
+                )
+                data = response.json()
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "message": data.get("message")
+                        or f"API 返回 {response.status_code}",
+                    }
+                return data
+        except httpx.ConnectError:
+            return {"success": False, "message": f"无法连接后端服务: {self.base_url}"}
+        except Exception as e:
+            logger.exception(f"[BackendClient] submit_analysis_result 异常: {e}")
+            return {"success": False, "message": str(e)}
 
     # ============================================================
     # 2.4 调用 /api/xhs/publish

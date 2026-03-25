@@ -17,6 +17,8 @@ MCP Tools - AI 话题分析工具集
 # 分析相关工具
 from opinion_mcp.tools.analyze import (
     analyze_topic,
+    retrieve_and_report,
+    submit_analysis_result,
     get_analysis_status,
     get_analysis_result,
     update_copywriting,
@@ -59,6 +61,8 @@ from opinion_mcp.tools.ai_daily import (
 __all__ = [
     # 分析相关
     "analyze_topic",
+    "retrieve_and_report",
+    "submit_analysis_result",
     "get_analysis_status",
     "get_analysis_result",
     "update_copywriting",
