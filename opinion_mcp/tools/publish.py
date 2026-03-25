@@ -14,6 +14,7 @@ import sys
 from typing import Any, Dict, List, Optional
 from loguru import logger
 
+from opinion_mcp.services.account_context import get_account_id
 from opinion_mcp.services.backend_client import backend_client
 from opinion_mcp.services.job_manager import job_manager
 from opinion_mcp.utils.url_validator import filter_valid_urls, download_images
@@ -179,6 +180,7 @@ async def publish_to_xhs(
         - publish_mode: str - 使用的发布模式
     """
     logger.info(f"[publish_to_xhs] 发布到小红书: job_id={job_id}")
+    account_id = account_id or get_account_id()
 
     # 获取发布模式
     publish_mode = get_image_publish_mode()
@@ -198,7 +200,7 @@ async def publish_to_xhs(
         }
 
     # 获取任务信息
-    job = job_manager.get_job(job_id)
+    job = job_manager.get_job(job_id, account_id=account_id)
     if not job:
         return {
             "success": False,

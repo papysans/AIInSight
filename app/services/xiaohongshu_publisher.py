@@ -8,15 +8,18 @@ MCP 服务地址：https://github.com/xpzouying/xiaohongshu-mcp
 import asyncio
 import base64
 import httpx
+import importlib
 import json
 import os
 import re
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, cast
 from zoneinfo import ZoneInfo
 from loguru import logger
+
+from app.services.account_context import get_account_id
 
 
 def _process_image(image: str) -> str:
@@ -108,7 +111,7 @@ class XiaohongshuPublisher:
 
     def _get_account_key(self, account_id: Optional[str] = None) -> str:
         """Map account_id to internal dict key. None → '_default'."""
-        return account_id or "_default"
+        return (account_id or get_account_id() or "_default").strip() or "_default"
 
     def _get_qr_lock(self, account_id: Optional[str] = None) -> asyncio.Lock:
         """Get or create per-account QR code lock."""
@@ -261,9 +264,10 @@ class XiaohongshuPublisher:
         """从 QR 码 PNG 图片中解码出 URL，再生成终端可扫描的 ASCII 二维码。"""
         try:
             from PIL import Image
-            from pyzbar.pyzbar import decode as pyzbar_decode
-            import qrcode
             import io
+
+            pyzbar_decode = cast(Any, importlib.import_module("pyzbar.pyzbar").decode)
+            qrcode_mod = cast(Any, importlib.import_module("qrcode"))
 
             img = Image.open(io.BytesIO(png_bytes))
             decoded = pyzbar_decode(img)
@@ -274,8 +278,8 @@ class XiaohongshuPublisher:
             qr_data = decoded[0].data.decode("utf-8")
             logger.info(f"[XHS QR] 解码出 QR 数据: {qr_data[:80]}...")
 
-            qr = qrcode.QRCode(
-                error_correction=qrcode.constants.ERROR_CORRECT_M,
+            qr = qrcode_mod.QRCode(
+                error_correction=qrcode_mod.constants.ERROR_CORRECT_M,
                 box_size=1,
                 border=1,
             )
@@ -623,17 +627,17 @@ class XiaohongshuPublisher:
 
             if not png_bytes and qr_url:
                 try:
-                    import qrcode
                     import io
 
-                    qr = qrcode.QRCode(
-                        error_correction=qrcode.constants.ERROR_CORRECT_M
+                    qrcode_mod = cast(Any, importlib.import_module("qrcode"))
+                    qr = qrcode_mod.QRCode(
+                        error_correction=qrcode_mod.constants.ERROR_CORRECT_M
                     )
                     qr.add_data(qr_url)
                     qr.make(fit=True)
                     img = qr.make_image(fill_color="black", back_color="white")
                     buf = io.BytesIO()
-                    img.save(buf, format="PNG")
+                    img.save(buf, "PNG")
                     png_bytes = buf.getvalue()
                 except Exception as e:
                     logger.warning(f"[XHS MCP] Failed to generate QR image: {e}")
