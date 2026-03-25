@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from opinion_mcp.services.account_context import get_account_id
-from opinion_mcp.services.backend_client import backend_client
+from opinion_mcp.services.xiaohongshu_publisher import xiaohongshu_publisher
 
 
 # ============================================================
@@ -77,7 +77,7 @@ async def publish_xhs_note(
     publish_tags = tags or []
 
     try:
-        publish_result = await backend_client.publish_xhs(
+        publish_result = await xiaohongshu_publisher.publish_content(
             title=title,
             content=content,
             images=images,
@@ -130,13 +130,13 @@ async def publish_xhs_note(
 async def check_xhs_status(account_id: Optional[str] = None) -> Dict[str, Any]:
     """检查小红书 MCP 服务可用性和登录状态。"""
     logger.info("[check_xhs_status] 检查小红书状态")
-    return await backend_client.get_xhs_status(account_id=account_id)
+    return await xiaohongshu_publisher.get_status(account_id=account_id)
 
 
 async def get_xhs_login_qrcode(account_id: Optional[str] = None) -> Dict[str, Any]:
     """获取小红书登录二维码信息。"""
     logger.info("[get_xhs_login_qrcode] 获取登录二维码")
-    result = await backend_client.get_xhs_login_qrcode(account_id=account_id)
+    result = await xiaohongshu_publisher.get_login_qrcode(account_id=account_id)
 
     qr_ascii = result.get("qr_ascii")
     if qr_ascii and result.get("success"):
@@ -153,14 +153,14 @@ async def get_xhs_login_qrcode(account_id: Optional[str] = None) -> Dict[str, An
 
 async def reset_xhs_login(account_id: Optional[str] = None) -> Dict[str, Any]:
     logger.info("[reset_xhs_login] 重置登录状态")
-    return await backend_client.reset_xhs_login(account_id=account_id)
+    return await xiaohongshu_publisher.reset_login(account_id=account_id)
 
 
 async def submit_xhs_verification(
     session_id: str, code: str, account_id: Optional[str] = None
 ) -> Dict[str, Any]:
     logger.info(f"[submit_xhs_verification] session_id={session_id}")
-    return await backend_client.submit_xhs_verification(
+    return await xiaohongshu_publisher.submit_verification(
         session_id, code, account_id=account_id
     )
 
@@ -169,7 +169,7 @@ async def check_xhs_login_session(
     session_id: str, account_id: Optional[str] = None
 ) -> Dict[str, Any]:
     logger.info(f"[check_xhs_login_session] session_id={session_id}")
-    return await backend_client.check_xhs_login_session(
+    return await xiaohongshu_publisher.check_login_session(
         session_id, account_id=account_id
     )
 
@@ -177,18 +177,18 @@ async def check_xhs_login_session(
 async def upload_xhs_cookies(cookies_data: Any) -> Dict[str, Any]:
     """将 cookies 注入到 xhs-mcp sidecar 并验证登录态。"""
     logger.info("[upload_xhs_cookies] 注入 cookies")
-    return await backend_client.upload_xhs_cookies(cookies_data)
+    return await xiaohongshu_publisher.verify_and_save_cookies(cookies_data)
 
 
 async def get_xhs_login_qrcode_v2() -> Dict[str, Any]:
     """通过 Playwright 代理获取小红书登录二维码（不依赖 xhs-mcp 原生登录）。"""
     logger.info("[get_xhs_login_qrcode_v2] 获取 Playwright 登录二维码")
-    return await backend_client.get_xhs_login_qrcode_v2()
+    return await xiaohongshu_publisher.start_playwright_login()
 
 
 async def poll_xhs_login_v2(session_id: str) -> Dict[str, Any]:
     """轮询 Playwright 登录状态。"""
-    return await backend_client.poll_xhs_login_v2(session_id)
+    return await xiaohongshu_publisher.poll_playwright_login(session_id)
 
 
 # ============================================================

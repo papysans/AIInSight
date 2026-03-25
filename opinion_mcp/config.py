@@ -10,8 +10,8 @@ import os
 class Config:
     """MCP 服务器配置"""
 
-    # 后端服务配置
-    BACKEND_URL: str = os.getenv("OPINION_BACKEND_URL", "http://localhost:8000")
+    # 渲染服务配置
+    RENDERER_SERVICE_URL: str = os.getenv("RENDERER_SERVICE_URL", "http://renderer:3001")
 
     # MCP 服务器配置
     MCP_PORT: int = int(os.getenv("OPINION_MCP_PORT", "18061"))

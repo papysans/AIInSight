@@ -12,7 +12,7 @@ async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> D
     Returns:
         { "results": [{ "success": bool, "output_path": str, "image_url": str }] }
     """
-    from app.services.card_render_client import card_render_client
+    from opinion_mcp.services.card_render_client import card_render_client
 
     results = []
     for spec in specs:

@@ -618,7 +618,7 @@ async def health_check() -> Dict[str, Any]:
         "started_at": _server_started_at.isoformat() if _server_started_at else None,
         "uptime_seconds": round(uptime_seconds, 2) if uptime_seconds else None,
         "available_tools": [tool.name for tool in MCP_TOOLS],
-        "backend_url": config.BACKEND_URL,
+        "renderer_url": config.RENDERER_SERVICE_URL,
     }
 
 
@@ -628,7 +628,7 @@ async def readiness_check() -> Dict[str, Any]:
         "status": "ready",
         "service": "AIInSight MCP Server",
         "available_tools": [tool.name for tool in MCP_TOOLS],
-        "backend_url": config.BACKEND_URL,
+        "renderer_url": config.RENDERER_SERVICE_URL,
         "require_api_key": config.REQUIRE_API_KEY,
     }
 
@@ -733,7 +733,7 @@ def log_startup_info(host: str, port: int) -> None:
     logger.info(f"  服务地址: http://{host}:{port}")
     logger.info(f"  健康检查: http://{host}:{port}/health")
     logger.info(f"  MCP 端点: http://{host}:{port}/mcp")
-    logger.info(f"  后端地址: {config.BACKEND_URL}")
+    logger.info(f"  渲染服务: {config.RENDERER_SERVICE_URL}")
     logger.info(f"  可用工具: {len(tools)} 个")
     for tool in tools:
         logger.info(f"    - {tool}")

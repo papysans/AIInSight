@@ -1,30 +1,4 @@
 services:
-  # FastAPI backend (Python)
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    env_file: .env
-    environment:
-      - RENDERER_SERVICE_URL=http://renderer:3001
-      - XHS_MCP_URL=http://xhs-mcp:18060/mcp
-      - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:8000}
-      - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-60}
-      - TZ=${TZ:-Asia/Shanghai}
-      - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
-      - XHS_IMAGE_API_DIR=/app/runtime/xhs/images
-      - XHS_IMAGE_MCP_DIR=/app/images
-    volumes:
-      - ./cache:/app/cache
-      - ./outputs:/app/outputs
-      - ./runtime/xhs/data:/app/runtime/xhs/data
-      - ./runtime/xhs/images:/app/runtime/xhs/images
-    depends_on:
-      - renderer
-      - xhs-mcp
-
   # Playwright card renderer (Express + headless Chromium)
   renderer:
     build:
@@ -46,12 +20,21 @@ services:
       - "18061:18061"
     env_file: .env
     environment:
-      - OPINION_BACKEND_URL=http://api:8000
       - RENDERER_SERVICE_URL=http://renderer:3001
       - XHS_MCP_URL=http://xhs-mcp:18060/mcp
+      - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-http://localhost:18061}
+      - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-60}
       - TZ=${TZ:-Asia/Shanghai}
+      - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
+      - XHS_IMAGE_API_DIR=/app/runtime/xhs/images
+      - XHS_IMAGE_MCP_DIR=/app/images
+    volumes:
+      - ./cache:/app/cache
+      - ./outputs:/app/outputs
+      - ./runtime/xhs/data:/app/runtime/xhs/data
+      - ./runtime/xhs/images:/app/runtime/xhs/images
     depends_on:
-      - api
+      - renderer
       - xhs-mcp
 
   xhs-mcp:
