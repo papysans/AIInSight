@@ -1,7 +1,7 @@
 import os
 import re
 from datetime import datetime
-from typing import TypedDict, List, Optional, Dict, Any
+from typing import TypedDict, List, Optional, Dict, Any, cast
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.llm import get_agent_llm
@@ -11,6 +11,7 @@ from app.services.topic_evidence_retriever import topic_evidence_retriever
 from app.schemas import EvidenceBundle
 from app.services.image_generator import image_generator_service
 from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+from app.services.account_context import get_account_id
 
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
@@ -120,11 +121,11 @@ async def _translate_topic_to_english_search_query(topic: str) -> Optional[str]:
         "- 提取核心动作词（如：capture, claim, say, announce, launch等）\n"
         "- 去除冗余的修饰词和连接词，只保留最核心的搜索关键词\n\n"
         "**示例**：\n"
-        "- 输入：\"特朗普声称捕获委内瑞拉总统\"\n"
+        '- 输入："特朗普声称捕获委内瑞拉总统"\n'
         "- 输出：Trump Venezuela Maduro capture\n"
-        "- 输入：\"OpenAI发布新模型\"\n"
+        '- 输入："OpenAI发布新模型"\n'
         "- 输出：OpenAI new model release\n"
-        "- 输入：\"特斯拉股价上涨\"\n"
+        '- 输入："特斯拉股价上涨"\n'
         "- 输出：Tesla stock price\n"
     )
 
@@ -155,6 +156,7 @@ async def _translate_topic_to_english_search_query(topic: str) -> Optional[str]:
     except Exception:
         return None
 
+
 # --- Helper Function ---
 def extract_text_content(content: Any) -> str:
     """Extract clean text content from LLM response which might be a list of dicts."""
@@ -174,6 +176,7 @@ def extract_text_content(content: Any) -> str:
                 text_parts.append(str(item))
         return "\n".join(text_parts)
     return str(content)
+
 
 # --- 1. State Definition ---
 class GraphState(TypedDict):
@@ -201,6 +204,7 @@ class GraphState(TypedDict):
     # Xiaohongshu Publish
     xhs_publish_enabled: bool  # Whether to auto-publish
     xhs_publish_result: Optional[Dict[str, Any]]
+
 
 # --- 2. LLM Setup ---
 # LLMs are now retrieved via get_agent_llm() inside nodes or globally if preferred.
@@ -305,6 +309,7 @@ CONTENT:
 
 # --- 4. Node Functions ---
 
+
 async def source_retriever_node(state: GraphState):
     """Evidence Retriever: Gathers evidence from multiple sources for the topic"""
     print("--- SOURCE RETRIEVER ---")
@@ -334,6 +339,7 @@ async def source_retriever_node(state: GraphState):
     print(f"[RETRIEVER] topic='{topic}', groups={source_groups}, depth={depth}")
 
     from app.services.workflow_status import workflow_status
+
     await workflow_status.update_step("source_retriever", current_source="检索中...")
 
     try:
@@ -352,7 +358,9 @@ async def source_retriever_node(state: GraphState):
         if not bundle.items:
             msg = f"证据检索完成：话题「{topic}」未获取到相关数据。"
 
-        print(f"[SUCCESS] Retriever completed: {bundle.evidence_count} items from {bundle.sources_analyzed}")
+        print(
+            f"[SUCCESS] Retriever completed: {bundle.evidence_count} items from {bundle.sources_analyzed}"
+        )
 
         return {
             "evidence_bundle": bundle.model_dump(),
@@ -368,6 +376,7 @@ async def source_retriever_node(state: GraphState):
             "source_stats": {},
             "messages": [error_msg],
         }
+
 
 async def reporter_node(state: GraphState):
     print("--- REPORTER ---")
@@ -414,10 +423,8 @@ async def reporter_node(state: GraphState):
     ]
     response = await llm.ainvoke(messages)
     content = _redact_political(extract_text_content(response.content))
-    return {
-        "news_content": content,
-        "messages": [f"Reporter: {content}"]
-    }
+    return {"news_content": content, "messages": [f"Reporter: {content}"]}
+
 
 async def analyst_node(state: GraphState):
     print("--- ANALYST ---")
@@ -433,35 +440,36 @@ async def analyst_node(state: GraphState):
     news_content = state["news_content"]
     critique = state.get("critique")
     llm = get_agent_llm("analyst")
-    
+
     prompt = f"新闻事实: {news_content}"
     if critique:
         prompt += f"\n\n需要解决的反对意见: {critique}"
-    
+
     # Calculate current round number (0-based, but display as 1-based)
     current_revision_count = state.get("revision_count", 0)
     if critique:
         # If there's a critique, this is a new round, so increment
         current_revision_count += 1
     # If no critique, this is the first round, so revision_count stays 0
-        
+
     messages = [
         SystemMessage(content=_with_safety_instruction(ANALYST_PROMPT)),
         HumanMessage(content=_redact_political(prompt)),
     ]
     response = await llm.ainvoke(messages)
     content = _redact_political(extract_text_content(response.content))
-    
+
     # Update history
     history = state.get("debate_history", [])
     history.append(f"### Analyst (Round {current_revision_count + 1})\n{content}\n")
-    
+
     return {
         "initial_analysis": content,
         "revision_count": current_revision_count,
         "messages": [f"Analyst: {content}"],
-        "debate_history": history
+        "debate_history": history,
     }
+
 
 async def debater_node(state: GraphState):
     print("--- DEBATER ---")
@@ -480,7 +488,7 @@ async def debater_node(state: GraphState):
     revision_count = state.get("revision_count", 0)
     debate_rounds = state.get("debate_rounds", settings.DEBATE_MAX_ROUNDS)
     llm = get_agent_llm("debater")
-    
+
     prompt_suffix = ""
     if revision_count + 1 < debate_rounds:
         prompt_suffix = f"\n\n当前是第 {revision_count + 1} 轮辩论（目标总轮数: {debate_rounds}）。请尽可能提出尖锐的改进建议，除非分析已经完美到无可挑剔，否则不要回复 PASS。"
@@ -497,16 +505,17 @@ async def debater_node(state: GraphState):
     ]
     response = await llm.ainvoke(messages)
     content = _redact_political(extract_text_content(response.content))
-    
+
     # Update history
     history = state.get("debate_history", [])
     history.append(f"### Debater (Critique Round {revision_count + 1})\n{content}\n")
-    
+
     return {
         "critique": content,
         "messages": [f"Debater: {content}"],
-        "debate_history": history
+        "debate_history": history,
     }
+
 
 async def writer_node(state: GraphState):
     print("--- WRITER ---")
@@ -526,36 +535,38 @@ async def writer_node(state: GraphState):
     # Summarize source stats
     stats_parts = [f"{s}: {n}条" for s, n in source_stats.items() if n]
     stats_str = ", ".join(stats_parts) if stats_parts else "无具体数据"
-    
+
     # Evidence uses the analyzed facts
     evidence = news_content
-    
+
     input_text = (
         f"输入：\n"
         f"- 热点话题：{topic}\n"
         f"- 关键信息/证据：{evidence}\n"
+        f"- 深度分析/辩论结论：{analysis}\n"
         f"- 来源分布/热度对比：{stats_str}\n"
         f"- 时间范围：{datetime.now().strftime('%Y-%m-%d')}\n"
     )
-    
+
     messages = [
         SystemMessage(content=_with_safety_instruction(WRITER_PROMPT)),
         HumanMessage(content=_redact_political(input_text)),
     ]
     response = await llm.ainvoke(messages)
     content = _redact_political(extract_text_content(response.content))
-    
+
     # Save to Markdown file
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     # Sanitize topic for filename
     safe_topic = re.sub(r'[\\/*?:"<>|]', "", _redact_political(topic))[:20]
     filename = f"{timestamp}_{safe_topic}.md"
-    output_dir = "outputs"
+    account_id = get_account_id()
+    output_dir = os.path.join("outputs", account_id)
     os.makedirs(output_dir, exist_ok=True)
     file_path = os.path.join(output_dir, filename)
-    
+
     debate_history = "\n".join(state.get("debate_history", []))
-    
+
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(f"# {_redact_political(topic)}\n\n")
         f.write("## 最终文案\n\n")
@@ -563,12 +574,13 @@ async def writer_node(state: GraphState):
         f.write("\n\n---\n\n")
         f.write("## 辩论过程记录\n\n")
         f.write(debate_history)
-        
+
     return {
         "final_copy": content,
         "output_file": file_path,
-        "messages": [f"Writer: {content}"]
+        "messages": [f"Writer: {content}"],
     }
+
 
 async def image_generator_node(state: GraphState):
     print("--- IMAGE GENERATOR ---")
@@ -579,74 +591,83 @@ async def image_generator_node(state: GraphState):
         }
     final_copy = state["final_copy"]
     output_file = state.get("output_file")
-    initial_analysis = state.get("initial_analysis", "") # This contains the insight + analysis
+    initial_analysis = state.get(
+        "initial_analysis", ""
+    )  # This contains the insight + analysis
     image_count = state.get("image_count", 2)  # 从 state 获取 image_count，默认 2
-    
+
     # Update status
     from app.services.workflow_status import workflow_status
+
     await workflow_status.update_step("image_generator")
-    
+
     # Extract insight if possible (it's embedded in the analysis string "INSIGHT: ...")
     # But passing the whole analysis is also fine, the prompt generator can handle it.
     # To be precise, let's pass the whole thing as 'insight' context.
-    image_urls = await image_generator_service.generate_images(final_copy, insight=initial_analysis, image_count=image_count)
-    
+    image_urls = await image_generator_service.generate_images(
+        final_copy, insight=initial_analysis, image_count=image_count
+    )
+
     if output_file and os.path.exists(output_file) and image_urls:
         with open(output_file, "a", encoding="utf-8") as f:
             f.write("\n\n## 生成的配图\n\n")
             for idx, url in enumerate(image_urls):
-                f.write(f"![图片{idx+1}]({url})\n\n")
-    
+                f.write(f"![图片{idx + 1}]({url})\n\n")
+
     return {
         "image_urls": image_urls,
-        "messages": [f"Image Generator: Generated {len(image_urls)} images."]
+        "messages": [f"Image Generator: Generated {len(image_urls)} images."],
     }
+
 
 async def xiaohongshu_publisher_node(state: GraphState):
     print("--- XHS PUBLISHER ---")
-    
+
     # Check if enabled in state or global config (for now, rely on manual button or future auto-publish flag)
     # The requirement was "call XHS MCP directly after generation", so we add the capability.
     # We check settings first.
     auto_publish = settings.XHS_MCP_CONFIG.get("auto_publish", False)
     state_enabled = state.get("xhs_publish_enabled", False)
-    
+
     if not (auto_publish or state_enabled):
         print("[XHS] Auto-publish disabled, skipping.")
         return {
             "xhs_publish_result": None,
-            "messages": ["XHS Publisher: Skipped (auto-publish disabled)."]
+            "messages": ["XHS Publisher: Skipped (auto-publish disabled)."],
         }
 
     if state.get("safety_blocked"):
         return {
             "xhs_publish_result": None,
-            "messages": ["XHS Publisher: Skipped (safety blocked)."]
+            "messages": ["XHS Publisher: Skipped (safety blocked)."],
         }
-        
+
     final_copy = state.get("final_copy", "")
     image_urls = state.get("image_urls", [])
-    
+
     if not final_copy or not image_urls:
         print("[XHS] Missing content or images, skipping.")
         return {
-            "xhs_publish_result": {"success": False, "error": "Missing content or images"},
-            "messages": ["XHS Publisher: Skipped (missing content/images)."]
+            "xhs_publish_result": {
+                "success": False,
+                "error": "Missing content or images",
+            },
+            "messages": ["XHS Publisher: Skipped (missing content/images)."],
         }
-        
+
     # Extract title and content from final_copy
     # Expected format:
     # TITLE: [title]
     # CONTENT: [content]
-    
+
     title = ""
     content = ""
-    
+
     # Simple parsing logic
-    lines = final_copy.split('\n')
+    lines = final_copy.split("\n")
     is_content = False
     content_lines = []
-    
+
     for line in lines:
         if line.strip().startswith("TITLE:"):
             title = line.replace("TITLE:", "").strip()
@@ -655,68 +676,68 @@ async def xiaohongshu_publisher_node(state: GraphState):
             is_content = True
         elif is_content:
             content_lines.append(line)
-            
+
     content = "\n".join(content_lines).strip()
-    
+
     # Fallback parsing if structure is lost
     if not title:
         title = state["topic"]
     if not content:
         content = final_copy
-        
+
     print(f"[XHS] Publishing: {title} with {len(image_urls)} images")
-    
+
     # Check MCP status first
     status = await xiaohongshu_publisher.get_status()
     if not status["mcp_available"] or not status["login_status"]:
         msg = f"XHS Publisher: Failed - {status['message']}"
         print(f"[XHS] {msg}")
         return {
-            "xhs_publish_result": {"success": False, "error": status['message']},
-            "messages": [msg]
+            "xhs_publish_result": {"success": False, "error": status["message"]},
+            "messages": [msg],
         }
 
     # Publish
     result = await xiaohongshu_publisher.publish_content(
-        title=title,
-        content=content,
-        images=image_urls
+        title=title, content=content, images=image_urls
     )
-    
+
     msg = f"XHS Publisher: {result.get('message', 'Unknown status')}"
     if result.get("success"):
         print("[XHS] Publish success!")
     else:
         print(f"[XHS] Publish failed: {result.get('error')}")
-        
-    return {
-        "xhs_publish_result": result,
-        "messages": [msg]
-    }
+
+    return {"xhs_publish_result": result, "messages": [msg]}
+
 
 # --- 5. Conditional Logic ---
+
 
 def should_continue(state: GraphState):
     critique = state.get("critique", "")
     revision_count = state.get("revision_count", 0)
     debate_rounds = state.get("debate_rounds", settings.DEBATE_MAX_ROUNDS)
-    
+
     # Ensure critique is a string before calling upper()
     if isinstance(critique, list):
         critique = str(critique)
     elif critique is None:
         critique = ""
-    
+
     # Check if we should stop: PASS verdict or reached max rounds
     # Note: revision_count is 0-based, so we check >= debate_rounds
     # If debate_rounds=2, we allow rounds 0,1 (2 rounds total)
     max_rounds = min(debate_rounds, settings.DEBATE_MAX_ROUNDS)  # 取两者较小值
-    
+
     # 更精确的 PASS 检查：通常 PASS 响应会比较短
     is_pass = "PASS" in critique.upper()
     if is_pass and len(critique.strip()) > 100:
         # 如果响应很长，可能只是正文中提到了 pass 这个词，而不是真正的跳过
-        if not (critique.strip().upper().startswith("PASS") or critique.strip().upper().endswith("PASS")):
+        if not (
+            critique.strip().upper().startswith("PASS")
+            or critique.strip().upper().endswith("PASS")
+        ):
             is_pass = False
 
     if is_pass or revision_count >= max_rounds:
@@ -725,9 +746,109 @@ def should_continue(state: GraphState):
         else:
             print(f"[INFO] Debater 给出 PASS，停止辩论")
         return "writer"
-    
+
     print(f"[INFO] 继续辩论: 第 {revision_count + 1} 轮完成，目标 {max_rounds} 轮")
     return "analyst"
+
+
+async def run_retrieve_and_report(state: Dict[str, Any]) -> Dict[str, Any]:
+    evidence_mode = state.get("evidence_mode", "full")
+    base_state: Dict[str, Any] = {
+        "topic": state["topic"],
+        "source_groups": state.get("source_groups", settings.DEFAULT_SOURCE_GROUPS),
+        "source_names": state.get("source_names"),
+        "depth": state.get("depth", "standard"),
+        "debate_rounds": state.get(
+            "debate_rounds",
+            settings.DEPTH_PRESETS.get(
+                state.get("depth", "standard"), settings.DEPTH_PRESETS["standard"]
+            ).get("debate_rounds", 2),
+        ),
+        "image_count": state.get("image_count", 0),
+        "messages": list(state.get("messages", [])),
+        "evidence_bundle": state.get("evidence_bundle"),
+        "source_stats": dict(state.get("source_stats", {})),
+        "news_content": state.get("news_content", ""),
+        "debate_history": list(state.get("debate_history", [])),
+    }
+
+    graph_state = cast(GraphState, cast(object, base_state))
+    retriever_update = await source_retriever_node(graph_state)
+    merged_state = cast(GraphState, cast(object, {**base_state, **retriever_update}))
+    reporter_update = await reporter_node(merged_state)
+    final_state = cast(GraphState, cast(object, {**merged_state, **reporter_update}))
+
+    evidence_bundle = final_state.get("evidence_bundle")
+    if evidence_mode == "summary" and isinstance(evidence_bundle, EvidenceBundle):
+        evidence_payload = evidence_bundle.model_dump()
+        evidence_items = evidence_payload.get("items", [])
+        evidence_bundle = {
+            "topic": evidence_bundle.topic,
+            "evidence_count": evidence_bundle.evidence_count,
+            "source_stats": evidence_bundle.source_stats,
+            "sources_analyzed": evidence_bundle.sources_analyzed,
+            "skipped_sources": evidence_bundle.skipped_sources,
+            "from_cache": evidence_bundle.from_cache,
+            "items": [
+                {
+                    "title": item.get("source_item", {}).get("title"),
+                    "url": item.get("source_item", {}).get("url"),
+                    "source": item.get("source_item", {}).get("source"),
+                    "summary": item.get("source_item", {}).get("summary"),
+                    "extraction_status": item.get("extraction_status"),
+                }
+                for item in evidence_items
+            ],
+        }
+
+    return {
+        "topic": final_state["topic"],
+        "evidence_bundle": evidence_bundle,
+        "source_stats": final_state.get("source_stats", {}),
+        "news_content": final_state.get("news_content", ""),
+        "messages": final_state.get("messages", []),
+        "safety_blocked": final_state.get("safety_blocked", False),
+        "safety_reason": final_state.get("safety_reason"),
+    }
+
+
+async def run_submit_analysis_result(state: Dict[str, Any]) -> Dict[str, Any]:
+    debate_history = state.get("debate_history") or []
+    if isinstance(debate_history, str):
+        debate_history = [debate_history]
+
+    base_state: Dict[str, Any] = {
+        "topic": state["topic"],
+        "news_content": state.get("news_content", ""),
+        "initial_analysis": state.get(
+            "final_analysis", state.get("initial_analysis", "")
+        ),
+        "source_stats": dict(state.get("source_stats", {})),
+        "debate_history": list(debate_history),
+        "image_count": state.get("image_count", 0),
+        "messages": list(state.get("messages", [])),
+        "xhs_publish_enabled": state.get("xhs_publish_enabled", False),
+        "safety_blocked": state.get("safety_blocked", False),
+        "safety_reason": state.get("safety_reason"),
+    }
+
+    writer_input = cast(GraphState, cast(object, base_state))
+    writer_update = await writer_node(writer_input)
+    writer_state = cast(GraphState, cast(object, {**base_state, **writer_update}))
+    image_update = await image_generator_node(writer_state)
+    image_state = cast(GraphState, cast(object, {**writer_state, **image_update}))
+    xhs_update = await xiaohongshu_publisher_node(image_state)
+    final_state = {**image_state, **xhs_update}
+
+    return {
+        "topic": final_state["topic"],
+        "final_copy": final_state.get("final_copy", ""),
+        "output_file": final_state.get("output_file"),
+        "image_urls": final_state.get("image_urls", []),
+        "xhs_publish_result": final_state.get("xhs_publish_result"),
+        "messages": final_state.get("messages", []),
+    }
+
 
 # --- 6. Graph Construction ---
 
@@ -748,12 +869,7 @@ workflow.add_edge("reporter", "analyst")
 workflow.add_edge("analyst", "debater")
 
 workflow.add_conditional_edges(
-    "debater",
-    should_continue,
-    {
-        "analyst": "analyst",
-        "writer": "writer"
-    }
+    "debater", should_continue, {"analyst": "analyst", "writer": "writer"}
 )
 
 workflow.add_edge("writer", "image_generator")
