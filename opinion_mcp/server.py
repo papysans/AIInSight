@@ -38,10 +38,14 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from opinion_mcp.config import config
+from opinion_mcp.services.api_key_registry import api_key_registry
+from opinion_mcp.services.account_context import get_account_id, set_account_id
 
 # 导入所有工具函数
 from opinion_mcp.tools import (
     analyze_topic,
+    retrieve_and_report,
+    submit_analysis_result,
     get_analysis_status,
     get_analysis_result,
     update_copywriting,
@@ -132,6 +136,25 @@ _server_started_at: Optional[datetime] = None
 _shutdown_event: Optional[asyncio.Event] = None
 
 
+def _resolve_account_id_from_request(request: Request) -> str:
+    api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization")
+    if api_key:
+        value = api_key.replace("Bearer", "").strip()
+        if value:
+            resolved = api_key_registry.resolve_account_id(value)
+            if resolved:
+                return resolved
+    forwarded = request.headers.get("X-Account-Id")
+    return (forwarded or "").strip() or "_default"
+
+
+def _validate_or_resolve_account_id(request: Request):
+    account_id = _resolve_account_id_from_request(request)
+    if config.REQUIRE_API_KEY and account_id == "_default":
+        return HTTPException(status_code=401, detail="Missing or invalid API key")
+    return account_id
+
+
 # ============================================================
 # 7.2 初始化 FastAPI 应用 (MCP 兼容)
 # ============================================================
@@ -162,6 +185,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def inject_account_context(request: Request, call_next):
+    resolved = _validate_or_resolve_account_id(request)
+    if isinstance(resolved, HTTPException):
+        raise resolved
+    set_account_id(resolved)
+    return await call_next(request)
 
 
 # ============================================================
@@ -207,6 +239,79 @@ MCP_TOOLS: List[MCPTool] = [
                 },
             },
             required=["topic"],
+        ),
+    ),
+    MCPTool(
+        name="retrieve_and_report",
+        description="执行云端前半段分析流程，只做证据检索与记者总结，返回 evidence_bundle、news_content 和 source_stats，供宿主端继续 debate。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "topic": {"type": "string", "description": "要分析的 AI 话题"},
+                "source_groups": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "来源组列表，可选值: media, research, code, community。留空使用全部",
+                },
+                "source_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "指定来源列表，如 hn, reddit, aibase 等。与 source_groups 互斥",
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["quick", "standard", "deep"],
+                    "default": "standard",
+                    "description": "分析深度: quick(快速)/standard(标准)/deep(深度)",
+                },
+            },
+            required=["topic"],
+        ),
+    ),
+    MCPTool(
+        name="submit_analysis_result",
+        description="提交宿主端 debate 产出的最终分析，继续执行云端后半段流程（writer + image generation + optional publish）。",
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "topic": {"type": "string", "description": "分析话题"},
+                "news_content": {
+                    "type": "string",
+                    "description": "云端 reporter 生成的事实摘要",
+                },
+                "final_analysis": {
+                    "type": "string",
+                    "description": "宿主端 debate 后的最终分析",
+                },
+                "debate_history": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "宿主端辩论过程记录",
+                },
+                "source_stats": {
+                    "type": "object",
+                    "description": "来源统计信息，如 {source_name: count}",
+                },
+                "image_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9,
+                    "default": 0,
+                    "description": "生成图片数量 (0-9)",
+                },
+                "xhs_publish_enabled": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "是否在后半段直接触发 XHS 发布",
+                },
+            },
+            required=[
+                "topic",
+                "news_content",
+                "final_analysis",
+                "debate_history",
+                "source_stats",
+            ],
         ),
     ),
     MCPTool(
@@ -527,6 +632,8 @@ MCP_TOOLS: List[MCPTool] = [
 # 工具名称到函数的映射
 TOOL_HANDLERS = {
     "analyze_topic": analyze_topic,
+    "retrieve_and_report": retrieve_and_report,
+    "submit_analysis_result": submit_analysis_result,
     "get_analysis_status": get_analysis_status,
     "get_analysis_result": get_analysis_result,
     "update_copywriting": update_copywriting,
@@ -619,7 +726,8 @@ async def handle_jsonrpc_request(
             result = {"tools": [tool.model_dump() for tool in MCP_TOOLS]}
         elif method == "tools/call":
             tool_name = params.get("name", "")
-            arguments = params.get("arguments", {})
+            arguments = dict(params.get("arguments", {}) or {})
+            arguments.setdefault("account_id", get_account_id())
 
             logger.info(f"[MCP] 调用工具: {tool_name}, 参数: {arguments}")
 
@@ -727,7 +835,13 @@ async def message_endpoint(request: Request, sessionId: Optional[str] = None):
         logger.error(f"[MCP] 解析请求体失败: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    logger.debug(f"[MCP] 收到消息: session={sessionId}, body={body}")
+    resolved = _validate_or_resolve_account_id(request)
+    if isinstance(resolved, HTTPException):
+        raise resolved
+    account_id = set_account_id(resolved)
+    logger.debug(
+        f"[MCP] 收到消息: session={sessionId}, account={account_id}, body={body}"
+    )
 
     # 支持批量请求
     if isinstance(body, list):
@@ -764,6 +878,11 @@ async def mcp_post_endpoint(request: Request):
     except Exception as e:
         logger.error(f"[MCP] 解析请求体失败: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    resolved = _validate_or_resolve_account_id(request)
+    if isinstance(resolved, HTTPException):
+        raise resolved
+    set_account_id(resolved)
 
     # 支持批量请求
     if isinstance(body, list):
@@ -818,6 +937,11 @@ async def root_post(request: Request):
         logger.error(f"[MCP] 解析请求体失败: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
+    resolved = _validate_or_resolve_account_id(request)
+    if isinstance(resolved, HTTPException):
+        raise resolved
+    set_account_id(resolved)
+
     # 支持批量请求
     if isinstance(body, list):
         requests = body
@@ -859,7 +983,8 @@ async def mcp_list_tools() -> MCPToolsResponse:
 async def mcp_call_tool(request: MCPCallToolRequest) -> MCPCallToolResponse:
     """MCP 工具调用端点 (HTTP 模式)"""
     tool_name = request.name
-    arguments = request.arguments
+    arguments = dict(request.arguments or {})
+    arguments.setdefault("account_id", get_account_id())
 
     logger.info(f"[MCP] 调用工具: {tool_name}, 参数: {arguments}")
 
@@ -918,6 +1043,17 @@ async def health_check() -> Dict[str, Any]:
     }
 
 
+@app.get("/readiness")
+async def readiness_check() -> Dict[str, Any]:
+    return {
+        "status": "ready",
+        "service": "AIInSight MCP Server",
+        "available_tools": [tool.name for tool in MCP_TOOLS],
+        "backend_url": config.BACKEND_URL,
+        "require_api_key": config.REQUIRE_API_KEY,
+    }
+
+
 # ============================================================
 # 直接 API 端点 (便于测试和兼容)
 # ============================================================
@@ -933,6 +1069,7 @@ class AnalyzeTopicRequest(BaseModel):
     depth: str = "standard"
     debate_rounds: Optional[int] = None
     image_count: int = 0
+    account_id: Optional[str] = None
 
 
 class JobIdRequest(BaseModel):
@@ -954,6 +1091,7 @@ class PublishXhsRequest(BaseModel):
     job_id: str
     title: Optional[str] = None
     tags: Optional[List[str]] = None
+    account_id: Optional[str] = None
 
 
 @app.post("/get_xhs_login_qrcode")
@@ -968,6 +1106,16 @@ class WebhookRequest(BaseModel):
 
     callback_url: str
     job_id: str
+    account_id: Optional[str] = None
+
+
+class ApiKeyCreateRequest(BaseModel):
+    account_id: str
+    note: str = ""
+
+
+class ApiKeyRevokeRequest(BaseModel):
+    api_key: str
 
 
 class UpdateCopywritingRequest(BaseModel):
@@ -991,6 +1139,7 @@ async def direct_analyze_topic_post(body: AnalyzeTopicRequest) -> Dict[str, Any]
         depth=body.depth,
         debate_rounds=body.debate_rounds,
         image_count=body.image_count,
+        account_id=body.account_id,
     )
 
 
@@ -1096,6 +1245,7 @@ async def direct_publish_xhs(body: PublishXhsRequest) -> Dict[str, Any]:
         job_id=body.job_id,
         title=body.title,
         tags=body.tags,
+        account_id=body.account_id,
     )
 
 
@@ -1105,7 +1255,30 @@ async def direct_register_webhook(body: WebhookRequest) -> Dict[str, Any]:
     return await register_webhook(
         callback_url=body.callback_url,
         job_id=body.job_id,
+        account_id=body.account_id,
     )
+
+
+@app.post("/admin/api-keys")
+async def create_api_key(body: ApiKeyCreateRequest) -> Dict[str, Any]:
+    logger.info(f"[ADMIN] Create API key for account={body.account_id}")
+    return api_key_registry.create_key(account_id=body.account_id, note=body.note)
+
+
+@app.get("/admin/api-keys")
+async def list_api_keys() -> Dict[str, Any]:
+    logger.info("[ADMIN] List API keys")
+    return {"success": True, "keys": api_key_registry.list_keys()}
+
+
+@app.post("/admin/api-keys/revoke")
+async def revoke_api_key(body: ApiKeyRevokeRequest) -> Dict[str, Any]:
+    logger.info("[ADMIN] Revoke API key")
+    revoked = api_key_registry.revoke_key(body.api_key)
+    return {
+        "success": revoked,
+        "revoked": revoked,
+    }
 
 
 @app.post("/update_copywriting")
