@@ -47,6 +47,7 @@ services:
     env_file: .env
     environment:
       - OPINION_BACKEND_URL=http://api:8000
+      - RENDERER_SERVICE_URL=http://renderer:3001
       - XHS_MCP_URL=http://xhs-mcp:18060/mcp
       - TZ=${TZ:-Asia/Shanghai}
     depends_on:

@@ -16,7 +16,7 @@ async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> D
 
     results = []
     for spec in specs:
-        card_type = spec.get("card_type", "")
+        card_type = spec.get("card_type", "").replace("-", "_")
         payload = spec.get("payload", {})
 
         try:
