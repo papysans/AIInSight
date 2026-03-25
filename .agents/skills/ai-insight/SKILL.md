@@ -141,18 +141,10 @@ docker compose logs --tail=60 mcp
 ```
 
 用户确认后：
-1. 优先走 split path：`retrieve_and_report` → 宿主端 debate → `submit_analysis_result`
-2. 如果当前客户端不支持宿主端 debate，再回退到 `analyze_ai_topic(topic_id, depth)`
-3. 展示分析结果（观点摘要、多角度解读、趋势判断）
-4. 如生成了卡片预览，优先展示卡片访问地址 `image_url`；若没有再展示本地文件路径
-5. 询问是否生成卡片或发布
-
-宿主端 debate 规则与 `ai-topic-analyzer` 保持一致：
-
-- Analyst 先基于 `retrieve_and_report` 返回的 `news_content + source_stats` 输出第一版分析
-- Debater 只负责反驳、补盲点和挑战推断
-- Debater 明确回复 `PASS` 或达到 `max_rounds` 时结束
-- 结束后调用 `submit_analysis_result`，把 `final_analysis + debate_history` 提交回云端后半段
+1. 调用 `analyze_ai_topic(topic_id, depth)` 启动后台分析
+2. 展示分析结果（观点摘要、多角度解读、趋势判断）
+3. 如生成了卡片预览，优先展示卡片访问地址 `image_url`；若没有再展示本地文件路径
+4. 询问是否生成卡片或发布
 
 ### 3. `/publish <topic_or_id>` — 发布到小红书
 
