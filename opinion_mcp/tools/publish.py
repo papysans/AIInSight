@@ -14,6 +14,7 @@ import sys
 from typing import Any, Dict, List, Optional
 from loguru import logger
 
+from opinion_mcp.services.account_context import get_account_id
 from opinion_mcp.services.backend_client import backend_client
 from opinion_mcp.services.job_manager import job_manager
 from opinion_mcp.utils.url_validator import filter_valid_urls, download_images
@@ -108,10 +109,10 @@ async def collect_images_for_publish(
 # ============================================================
 
 
-async def get_xhs_login_qrcode() -> Dict[str, Any]:
+async def get_xhs_login_qrcode(account_id: Optional[str] = None) -> Dict[str, Any]:
     """获取小红书登录二维码信息。"""
     logger.info("[get_xhs_login_qrcode] 获取登录二维码")
-    result = await backend_client.get_xhs_login_qrcode()
+    result = await backend_client.get_xhs_login_qrcode(account_id=account_id)
 
     # Embed ASCII QR prominently for CLI clients
     qr_ascii = result.get("qr_ascii")
@@ -127,15 +128,34 @@ async def get_xhs_login_qrcode() -> Dict[str, Any]:
     return result
 
 
-async def reset_xhs_login() -> Dict[str, Any]:
+async def reset_xhs_login(account_id: Optional[str] = None) -> Dict[str, Any]:
     logger.info("[reset_xhs_login] 重置登录状态")
-    return await backend_client.reset_xhs_login()
+    return await backend_client.reset_xhs_login(account_id=account_id)
+
+
+async def submit_xhs_verification(
+    session_id: str, code: str, account_id: Optional[str] = None
+) -> Dict[str, Any]:
+    logger.info(f"[submit_xhs_verification] session_id={session_id}")
+    return await backend_client.submit_xhs_verification(
+        session_id, code, account_id=account_id
+    )
+
+
+async def check_xhs_login_session(
+    session_id: str, account_id: Optional[str] = None
+) -> Dict[str, Any]:
+    logger.info(f"[check_xhs_login_session] session_id={session_id}")
+    return await backend_client.check_xhs_login_session(
+        session_id, account_id=account_id
+    )
 
 
 async def publish_to_xhs(
     job_id: str,
     title: Optional[str] = None,
     tags: Optional[List[str]] = None,
+    account_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     将分析结果发布到小红书
@@ -160,6 +180,7 @@ async def publish_to_xhs(
         - publish_mode: str - 使用的发布模式
     """
     logger.info(f"[publish_to_xhs] 发布到小红书: job_id={job_id}")
+    account_id = account_id or get_account_id()
 
     # 获取发布模式
     publish_mode = get_image_publish_mode()
@@ -179,7 +200,7 @@ async def publish_to_xhs(
         }
 
     # 获取任务信息
-    job = job_manager.get_job(job_id)
+    job = job_manager.get_job(job_id, account_id=account_id)
     if not job:
         return {
             "success": False,
@@ -328,6 +349,7 @@ async def publish_to_xhs(
             content=content,
             images=valid_images,
             tags=publish_tags,
+            account_id=account_id,
         )
 
         if not publish_result.get("success"):
@@ -405,21 +427,21 @@ async def publish_to_xhs(
 # ============================================================
 
 
-async def check_xhs_status() -> Dict[str, Any]:
+async def check_xhs_status(account_id: Optional[str] = None) -> Dict[str, Any]:
     """检查小红书 MCP 服务可用性和登录状态。"""
     logger.info("[check_xhs_status] 检查小红书状态")
-    return await backend_client.get_xhs_status()
+    return await backend_client.get_xhs_status(account_id=account_id)
 
 
 # ============================================================
 # ============================================================
 
 
-async def xhs_login() -> Dict[str, Any]:
+async def xhs_login(account_id: Optional[str] = None) -> Dict[str, Any]:
     logger.info("[xhs_login] 统一登录流程")
 
     # 1. 检查当前状态
-    status = await backend_client.get_xhs_status()
+    status = await backend_client.get_xhs_status(account_id=account_id)
     if status.get("login_status"):
         return {
             "success": True,
@@ -427,7 +449,7 @@ async def xhs_login() -> Dict[str, Any]:
             "message": status.get("message", "已登录，无需扫码"),
         }
 
-    login_result = await backend_client.get_xhs_login_qrcode()
+    login_result = await backend_client.get_xhs_login_qrcode(account_id=account_id)
     if login_result.get("success") and (
         login_result.get("qr_image_url")
         or login_result.get("qr_image_route")

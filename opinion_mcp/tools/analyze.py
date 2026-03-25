@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from opinion_mcp.config import config
+from opinion_mcp.services.account_context import get_account_id
 from opinion_mcp.schemas import (
     JobStatus,
     EventType,
@@ -43,6 +44,7 @@ CARD_STORAGE_KEY_MAP = {
 # 5.2 analyze_topic 工具 - 启动分析任务
 # ============================================================
 
+
 async def analyze_topic(
     topic: str,
     source_groups: Optional[List[str]] = None,
@@ -50,13 +52,14 @@ async def analyze_topic(
     depth: str = "standard",
     debate_rounds: Optional[int] = None,
     image_count: int = 0,
+    account_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     启动 AI 话题分析任务
-    
+
     启动一个后台分析任务，立即返回 job_id。
     分析过程在后台执行，可通过 get_analysis_status 查询进度。
-    
+
     Args:
         topic: 要分析的 AI 话题
         source_groups: 来源组列表，可选值: media, research, code, community。留空使用全部
@@ -65,8 +68,10 @@ async def analyze_topic(
         debate_rounds: 辩论轮数 (0-5)，留空则由 depth 决定
         image_count: 生成图片数量 (0-9)，0表示不生图，默认0
     """
-    logger.info(f"[analyze_topic] 收到分析请求: topic={topic}, source_groups={source_groups}, depth={depth}")
-    
+    logger.info(
+        f"[analyze_topic] 收到分析请求: topic={topic}, source_groups={source_groups}, depth={depth}"
+    )
+
     # 参数验证
     if not topic or not topic.strip():
         return {
@@ -74,11 +79,12 @@ async def analyze_topic(
             "error": "话题不能为空",
             "job_id": None,
         }
-    
+
     topic = topic.strip()
-    
+    account_id = account_id or get_account_id()
+
     # 防重复调用
-    current_job = job_manager.get_current_job()
+    current_job = job_manager.get_current_job(account_id=account_id)
     if current_job:
         if current_job.is_running:
             logger.warning(f"[analyze_topic] 已有任务在运行: {current_job.job_id}")
@@ -90,7 +96,7 @@ async def analyze_topic(
                 "progress": current_job.progress,
                 "hint": "请使用 get_analysis_status 查询进度，或等待任务完成",
             }
-        
+
         if current_job.topic == topic:
             elapsed = (datetime.now() - current_job.created_at).total_seconds()
             if elapsed < 60:
@@ -101,24 +107,26 @@ async def analyze_topic(
                     "status": current_job.status.value,
                     "hint": f"任务创建于 {elapsed:.0f} 秒前，请使用 get_analysis_status 查询状态",
                 }
-    
+
     # 验证 depth
     if depth not in config.DEPTH_PRESETS:
         depth = "standard"
-    
+
     # 确定辩论轮数
     if debate_rounds is None:
         debate_rounds = config.DEPTH_PRESETS[depth]["debate_rounds"]
     else:
         debate_rounds = max(0, min(debate_rounds, config.MAX_DEBATE_ROUNDS))
-    
+
+    assert debate_rounds is not None
+
     # 验证图片数量
     image_count = max(0, min(image_count, config.MAX_IMAGE_COUNT))
-    
+
     # 默认来源组
     if not source_groups and not source_names:
         source_groups = config.DEFAULT_SOURCE_GROUPS
-    
+
     # 创建任务
     try:
         job_id = job_manager.create_job(
@@ -128,52 +136,105 @@ async def analyze_topic(
             depth=depth,
             debate_rounds=debate_rounds,
             image_count=image_count,
+            account_id=account_id,
         )
     except ValueError as e:
-        current_job = job_manager.get_current_job()
+        current_job = job_manager.get_current_job(account_id=account_id)
         return {
             "success": False,
             "error": str(e),
             "job_id": current_job.job_id if current_job else None,
             "hint": "请等待当前任务完成，或使用 get_analysis_status 查询进度",
         }
-    
+
     # 更新任务状态为运行中
     job_manager.update_status(job_id, status=JobStatus.RUNNING)
-    
+
     # 启动后台任务
-    asyncio.create_task(_run_analysis_task(
-        job_id, topic, source_groups or [], source_names or [],
-        depth, debate_rounds, image_count,
-    ))
-    
+    asyncio.create_task(
+        _run_analysis_task(
+            job_id,
+            topic,
+            source_groups or [],
+            source_names or [],
+            depth,
+            debate_rounds,
+            image_count,
+            account_id,
+        )
+    )
+
     # 计算预估时间
     estimated_time = 5 + debate_rounds * 2
-    
+
     logger.info(f"[analyze_topic] 任务已启动: job_id={job_id}")
-    
+
     return {
         "success": True,
         "job_id": job_id,
         "message": "分析任务已启动",
         "estimated_time_minutes": int(estimated_time),
-        "sources": source_names or [s for g in (source_groups or []) for s in config.SOURCE_GROUPS.get(g, [])],
+        "sources": source_names
+        or [s for g in (source_groups or []) for s in config.SOURCE_GROUPS.get(g, [])],
         "depth": depth,
         "hint": "请使用 get_analysis_status 查询进度",
     }
+
+
+async def retrieve_and_report(
+    topic: str,
+    source_groups: Optional[List[str]] = None,
+    source_names: Optional[List[str]] = None,
+    depth: str = "standard",
+    account_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    account_id = account_id or get_account_id()
+    return await backend_client.retrieve_and_report(
+        topic=topic,
+        source_groups=source_groups,
+        source_names=source_names,
+        depth=depth,
+        account_id=account_id,
+    )
+
+
+async def submit_analysis_result(
+    topic: str,
+    news_content: str,
+    final_analysis: str,
+    debate_history: List[str],
+    source_stats: Dict[str, int],
+    image_count: int = 0,
+    xhs_publish_enabled: bool = False,
+    account_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    account_id = account_id or get_account_id()
+    return await backend_client.submit_analysis_result(
+        topic=topic,
+        news_content=news_content,
+        final_analysis=final_analysis,
+        debate_history=debate_history,
+        source_stats=source_stats,
+        image_count=image_count,
+        xhs_publish_enabled=xhs_publish_enabled,
+        account_id=account_id,
+    )
 
 
 # ============================================================
 # 5.3 get_analysis_status 工具 - 查询进度
 # ============================================================
 
-async def get_analysis_status(job_id: Optional[str] = None) -> Dict[str, Any]:
+
+async def get_analysis_status(
+    job_id: Optional[str] = None, account_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     查询 AI 话题分析任务的当前状态和进度
-    
+
     Args:
         job_id: 任务 ID，由 analyze_topic 返回。留空则查询最近一次任务
-        
+
     Returns:
         Dict 包含:
         - success: bool - 是否成功
@@ -189,13 +250,14 @@ async def get_analysis_status(job_id: Optional[str] = None) -> Dict[str, Any]:
         - estimated_remaining_minutes: float - 预估剩余时间
     """
     logger.debug(f"[get_analysis_status] 查询状态: job_id={job_id}")
-    
+    account_id = account_id or get_account_id()
+
     # 获取任务
     if job_id:
-        job = job_manager.get_job(job_id)
+        job = job_manager.get_job(job_id, account_id=account_id)
     else:
-        job = job_manager.get_current_job()
-    
+        job = job_manager.get_current_job(account_id=account_id)
+
     if not job:
         return {
             "success": True,
@@ -203,7 +265,7 @@ async def get_analysis_status(job_id: Optional[str] = None) -> Dict[str, Any]:
             "running": False,
             "message": "没有找到任务" if job_id else "当前没有运行中的任务",
         }
-    
+
     # 计算预估剩余时间
     estimated_remaining = None
     if job.is_running and job.progress > 0:
@@ -212,7 +274,7 @@ async def get_analysis_status(job_id: Optional[str] = None) -> Dict[str, Any]:
             # 基于当前进度估算总时间
             total_estimated = elapsed / (job.progress / 100)
             estimated_remaining = max(0, total_estimated - elapsed)
-    
+
     return {
         "success": True,
         "job_id": job.job_id,
@@ -223,8 +285,12 @@ async def get_analysis_status(job_id: Optional[str] = None) -> Dict[str, Any]:
         "topic": job.topic,
         "current_source": job.current_source,
         "started_at": job.started_at.isoformat() if job.started_at else None,
-        "elapsed_minutes": round(job.elapsed_minutes, 2) if job.elapsed_minutes else None,
-        "estimated_remaining_minutes": round(estimated_remaining, 2) if estimated_remaining else None,
+        "elapsed_minutes": round(job.elapsed_minutes, 2)
+        if job.elapsed_minutes
+        else None,
+        "estimated_remaining_minutes": round(estimated_remaining, 2)
+        if estimated_remaining
+        else None,
         "status": job.status.value,
         "error_message": job.error_message,
     }
@@ -234,13 +300,16 @@ async def get_analysis_status(job_id: Optional[str] = None) -> Dict[str, Any]:
 # 5.4 get_analysis_result 工具 - 获取结果 (含 cards)
 # ============================================================
 
-async def get_analysis_result(job_id: Optional[str] = None) -> Dict[str, Any]:
+
+async def get_analysis_result(
+    job_id: Optional[str] = None, account_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     获取已完成的 AI 话题分析结果，包含文案和配图
-    
+
     Args:
         job_id: 任务 ID。留空则获取最近一次完成的任务结果
-        
+
     Returns:
         Dict 包含:
         - success: bool - 是否成功
@@ -260,22 +329,25 @@ async def get_analysis_result(job_id: Optional[str] = None) -> Dict[str, Any]:
         - duration_minutes: float - 耗时
     """
     logger.debug(f"[get_analysis_result] 获取结果: job_id={job_id}")
-    
+    account_id = account_id or get_account_id()
+
     # 获取任务
     if job_id:
-        job = job_manager.get_job(job_id)
+        job = job_manager.get_job(job_id, account_id=account_id)
     else:
         # 获取最近完成的任务
-        completed_jobs = job_manager.list_jobs(status=JobStatus.COMPLETED, limit=1)
+        completed_jobs = job_manager.list_jobs(
+            status=JobStatus.COMPLETED, limit=1, account_id=account_id
+        )
         job = completed_jobs[0] if completed_jobs else None
-    
+
     if not job:
         return {
             "success": False,
             "error": "任务不存在" if job_id else "没有已完成的任务",
             "job_id": job_id,
         }
-    
+
     # 检查任务状态
     if job.is_running:
         return {
@@ -285,14 +357,14 @@ async def get_analysis_result(job_id: Optional[str] = None) -> Dict[str, Any]:
             "progress": job.progress,
             "current_step_name": job.current_step_name,
         }
-    
+
     if job.is_failed:
         return {
             "success": False,
             "error": f"任务失败: {job.error_message or '未知错误'}",
             "job_id": job.job_id,
         }
-    
+
     # 构建结果
     result = job.result
     if not result:
@@ -301,12 +373,12 @@ async def get_analysis_result(job_id: Optional[str] = None) -> Dict[str, Any]:
             "error": "任务已完成但没有结果数据",
             "job_id": job.job_id,
         }
-    
+
     # 计算耗时
     duration_minutes = None
     if job.started_at and job.completed_at:
         duration_minutes = (job.completed_at - job.started_at).total_seconds() / 60
-    
+
     return {
         "success": True,
         "job_id": job.job_id,
@@ -330,6 +402,7 @@ async def get_analysis_result(job_id: Optional[str] = None) -> Dict[str, Any]:
 # 5.5 update_copywriting 工具 - 修改文案
 # ============================================================
 
+
 async def update_copywriting(
     job_id: str,
     title: Optional[str] = None,
@@ -339,14 +412,14 @@ async def update_copywriting(
 ) -> Dict[str, Any]:
     """
     修改分析结果的文案内容
-    
+
     Args:
         job_id: 任务 ID
         title: 新标题（留空则不修改）
         subtitle: 新副标题（留空则不修改）
         content: 新正文内容（留空则不修改）
         tags: 新标签列表（留空则不修改）
-        
+
     Returns:
         Dict 包含:
         - success: bool - 是否成功
@@ -355,20 +428,20 @@ async def update_copywriting(
         - copywriting: Dict - 更新后的文案内容
     """
     logger.info(f"[update_copywriting] 更新文案: job_id={job_id}")
-    
+
     if not job_id:
         return {
             "success": False,
             "error": "job_id 不能为空",
         }
-    
+
     # 检查是否有任何更新
     if title is None and subtitle is None and content is None and tags is None:
         return {
             "success": False,
             "error": "至少需要提供一个要更新的字段",
         }
-    
+
     # 更新文案
     job, updated_fields = job_manager.update_copywriting(
         job_id=job_id,
@@ -377,18 +450,18 @@ async def update_copywriting(
         content=content,
         tags=tags,
     )
-    
+
     if not job:
         return {
             "success": False,
             "error": f"任务不存在: {job_id}",
         }
-    
+
     # 获取更新后的文案
     copywriting = None
     if job.result and job.result.copywriting:
         copywriting = job.result.copywriting.model_dump()
-    
+
     return {
         "success": True,
         "job_id": job_id,
@@ -401,6 +474,7 @@ async def update_copywriting(
 # 5.6 后台任务执行逻辑 (asyncio.create_task)
 # ============================================================
 
+
 async def _run_analysis_task(
     job_id: str,
     topic: str,
@@ -409,23 +483,26 @@ async def _run_analysis_task(
     depth: str,
     debate_rounds: int,
     image_count: int = 0,
+    account_id: Optional[str] = None,
 ) -> None:
     """
     后台执行分析任务
-    
+
     调用后端 API 进行分析，解析 SSE 事件并更新任务状态。
     """
     logger.info(f"[_run_analysis_task] 开始执行任务: job_id={job_id}")
-    
+
     # 推送任务开始事件
-    sources = source_names or [s for g in source_groups for s in config.SOURCE_GROUPS.get(g, [])]
-    await webhook_manager.push_started(job_id, topic, sources)
-    
+    sources = source_names or [
+        s for g in source_groups for s in config.SOURCE_GROUPS.get(g, [])
+    ]
+    await webhook_manager.push_started(job_id, topic, sources, account_id=account_id)
+
     # 用于跟踪当前步骤和来源完成情况
     current_step = None
     source_stats: Dict[str, int] = {}
     sources_analyzed: List[str] = []
-    
+
     # 用于存储分析结果
     summary = ""
     insight = ""
@@ -436,7 +513,7 @@ async def _run_analysis_task(
     cards: Dict[str, str] = {}
     ai_images: List[str] = []
     output_file = None
-    
+
     try:
         # 调用后端分析 API
         async for event in backend_client.call_analyze_api(
@@ -446,27 +523,30 @@ async def _run_analysis_task(
             depth=depth,
             debate_rounds=debate_rounds,
             image_count=image_count,
+            account_id=account_id,
         ):
             # 处理错误事件
             if event.get("status") == "error":
                 error_msg = event.get("step_content", "未知错误")
                 logger.error(f"[_run_analysis_task] 分析出错: {error_msg}")
-                
+
                 job_manager.update_status(
                     job_id,
                     status=JobStatus.FAILED,
                     error_message=error_msg,
                 )
-                
+
                 # 推送失败事件
-                await webhook_manager.push_failed(job_id, error_msg, current_step)
+                await webhook_manager.push_failed(
+                    job_id, error_msg, current_step, account_id=account_id
+                )
                 return
-            
+
             # 解析事件数据
             agent_name = event.get("agent_name", "")
             step_content = event.get("step_content", "")
             status = event.get("status", "")
-            
+
             # 5.7 在 SSE 事件中触发 Webhook 推送
             await _process_sse_event(
                 job_id=job_id,
@@ -477,29 +557,31 @@ async def _run_analysis_task(
                 current_step=current_step,
                 source_stats=source_stats,
                 sources_analyzed=sources_analyzed,
+                account_id=account_id,
             )
-            
+
             # 更新当前步骤
             new_step = _map_agent_to_step(agent_name)
             if new_step and new_step != current_step:
                 current_step = new_step
                 step_info = config.get_step_info(current_step)
-                
+
                 job_manager.update_status(
                     job_id,
                     current_step=current_step,
                     current_step_name=step_info["name"],
                     progress=step_info["progress"],
                 )
-                
+
                 # 推送步骤变更事件
                 await webhook_manager.push_step_change(
                     job_id,
                     current_step,
                     step_info["name"],
                     step_info["progress"],
+                    account_id=account_id,
                 )
-            
+
             # 提取结果数据
             summary_ref = {"value": summary}
             insight_ref = {"value": insight}
@@ -510,7 +592,7 @@ async def _run_analysis_task(
             cards_ref = {"value": cards}
             ai_images_ref = {"value": ai_images}
             output_file_ref = {"value": output_file}
-            
+
             _extract_result_data(
                 event=event,
                 agent_name=agent_name,
@@ -524,20 +606,22 @@ async def _run_analysis_task(
                 ai_images_ref=ai_images_ref,
                 output_file_ref=output_file_ref,
             )
-            
+
             # 从引用中更新变量
             if ai_images_ref["value"]:
                 ai_images = ai_images_ref["value"]
-                logger.info(f"[_run_analysis_task] 从 _extract_result_data 获取到 {len(ai_images)} 张图片")
+                logger.info(
+                    f"[_run_analysis_task] 从 _extract_result_data 获取到 {len(ai_images)} 张图片"
+                )
             if cards_ref["value"]:
                 cards = cards_ref["value"]
             if output_file_ref["value"]:
                 output_file = output_file_ref["value"]
-            
+
             # 更新引用值
             summary = summary or event.get("summary", "")
             insight = insight or event.get("insight", "")
-            
+
             # 从 Analyst 输出中提取 SUMMARY 和 INSIGHT
             if agent_name.lower() == "analyst":
                 analyst_content = step_content or ""
@@ -551,13 +635,21 @@ async def _run_analysis_task(
                         title = parsed_analyst["title"]
                     if parsed_analyst.get("subtitle") and not subtitle:
                         subtitle = parsed_analyst["subtitle"]
-            
+
             # 处理 writer 输出 - 优先使用 final_copy 字段
             if agent_name.lower() == "writer":
                 # 优先使用后端发送的 final_copy 字段
-                writer_content = event.get("final_copy") or step_content or event.get("step_content", "")
-                logger.debug(f"[_run_analysis_task] Writer 原始内容来源: final_copy={bool(event.get('final_copy'))}, step_content={bool(step_content)}")
-                logger.debug(f"[_run_analysis_task] Writer 原始内容长度: {len(writer_content) if writer_content else 0}")
+                writer_content = (
+                    event.get("final_copy")
+                    or step_content
+                    or event.get("step_content", "")
+                )
+                logger.debug(
+                    f"[_run_analysis_task] Writer 原始内容来源: final_copy={bool(event.get('final_copy'))}, step_content={bool(step_content)}"
+                )
+                logger.debug(
+                    f"[_run_analysis_task] Writer 原始内容长度: {len(writer_content) if writer_content else 0}"
+                )
                 if writer_content:
                     # 解析 TITLE:, EMOJI:, THEME:, CONTENT: 格式
                     parsed = _parse_writer_output(writer_content)
@@ -567,30 +659,36 @@ async def _run_analysis_task(
                         content = parsed["content"]
                     if parsed.get("tags"):
                         tags = parsed["tags"]
-                    logger.info(f"[_run_analysis_task] Writer 输出解析: title={title[:20] if title else 'N/A'}..., content_len={len(content)}, tags_count={len(tags)}")
-            
+                    logger.info(
+                        f"[_run_analysis_task] Writer 输出解析: title={title[:20] if title else 'N/A'}..., content_len={len(content)}, tags_count={len(tags)}"
+                    )
+
             # 处理图片生成输出
             if agent_name.lower() == "image_generator":
                 # 直接从 event 中获取 image_urls
                 img_urls = event.get("image_urls", [])
                 if img_urls:
                     ai_images = img_urls
-                    logger.info(f"[_run_analysis_task] 获取到 {len(ai_images)} 张图片: {ai_images}")
-            
+                    logger.info(
+                        f"[_run_analysis_task] 获取到 {len(ai_images)} 张图片: {ai_images}"
+                    )
+
             # 处理输出文件
             if event.get("output_file"):
                 output_file = event.get("output_file")
-            
+
             # 处理来源检索完成
             if agent_name in ("source_retriever", "crawler_agent"):
-                source_data = event.get("source_stats") or event.get("platform_data", {})
+                source_data = event.get("source_stats") or event.get(
+                    "platform_data", {}
+                )
                 if source_data:
                     for source_code, count in source_data.items():
                         if source_code not in source_stats:
                             source_stats[source_code] = count
                             source_name = config.get_source_name(source_code)
                             sources_analyzed.append(source_name)
-                            
+
                             progress = min(10 + len(source_stats) * 2, 20)
                             await webhook_manager.push_platform_done(
                                 job_id,
@@ -598,14 +696,15 @@ async def _run_analysis_task(
                                 source_name,
                                 count,
                                 progress,
+                                account_id=account_id,
                             )
-                            
+
                             job_manager.update_status(
                                 job_id,
                                 current_source=source_code,
                                 progress=progress,
                             )
-        
+
         # 分析完成，存储结果
         job_manager.store_result(
             job_id=job_id,
@@ -621,7 +720,7 @@ async def _run_analysis_task(
             source_stats=source_stats,
             output_file=output_file,
         )
-        
+
         # 更新任务状态为完成
         job_manager.update_status(
             job_id,
@@ -630,30 +729,33 @@ async def _run_analysis_task(
             current_step_name="完成",
             progress=100,
         )
-        
+
         # 获取任务信息计算耗时
-        job = job_manager.get_job(job_id)
+        job = job_manager.get_job(job_id, account_id=account_id)
         duration_minutes = job.elapsed_minutes if job else None
-        
+
         # 推送完成事件
         await webhook_manager.push_completed(
             job_id,
             result=job.result if job else None,
             duration_minutes=duration_minutes,
+            account_id=account_id,
         )
-        
+
         logger.info(f"[_run_analysis_task] 任务完成: job_id={job_id}")
-        
+
     except Exception as e:
         logger.exception(f"[_run_analysis_task] 任务执行异常: {e}")
-        
+
         job_manager.update_status(
             job_id,
             status=JobStatus.FAILED,
             error_message=str(e),
         )
-        
-        await webhook_manager.push_failed(job_id, str(e), current_step)
+
+        await webhook_manager.push_failed(
+            job_id, str(e), current_step, account_id=account_id
+        )
 
 
 async def _process_sse_event(
@@ -665,6 +767,7 @@ async def _process_sse_event(
     current_step: Optional[str],
     source_stats: Dict[str, int],
     sources_analyzed: List[str],
+    account_id: Optional[str] = None,
 ) -> None:
     """
     处理 SSE 事件并触发 Webhook 推送
@@ -673,7 +776,8 @@ async def _process_sse_event(
     if agent_name == "debater" and "round" in step_content.lower():
         # 尝试提取轮次信息
         import re
-        match = re.search(r'(\d+)', step_content)
+
+        match = re.search(r"(\d+)", step_content)
         if match:
             round_num = match.group(1)
             await webhook_manager.push_progress(
@@ -682,8 +786,9 @@ async def _process_sse_event(
                 "多角度辩论",
                 60,
                 f"🔄 正在进行多角度辩论 (第{round_num}轮)...",
+                account_id=account_id,
             )
-    
+
     # 处理图片生成进度
     if agent_name == "image_generator" and status == "generating":
         image_progress = event.get("image_progress", {})
@@ -696,16 +801,17 @@ async def _process_sse_event(
                 "图片生成",
                 95,
                 f"🔄 正在生成配图 ({current}/{total})...",
+                account_id=account_id,
             )
 
 
 def _map_agent_to_step(agent_name: str) -> Optional[str]:
     """
     将 Agent 名称映射到步骤代码
-    
+
     Args:
         agent_name: Agent 名称
-        
+
     Returns:
         步骤代码，如果无法映射则返回 None
     """
@@ -728,7 +834,7 @@ def _map_agent_to_step(agent_name: str) -> Optional[str]:
 def _parse_writer_output(content: str) -> Dict[str, Any]:
     """
     解析 Writer 输出的格式
-    
+
     Writer 输出格式:
     TITLE: [标题]
     EMOJI: [emoji]
@@ -736,54 +842,52 @@ def _parse_writer_output(content: str) -> Dict[str, Any]:
     CONTENT:
     [正文内容]
     #标签 #标签
-    
+
     Args:
         content: Writer 的原始输出
-        
+
     Returns:
         解析后的字典，包含 title, emoji, theme, content, tags
     """
     import re
-    
-    result = {
-        "title": "",
-        "emoji": "",
-        "theme": "",
-        "content": "",
-        "tags": []
-    }
-    
+
+    result = {"title": "", "emoji": "", "theme": "", "content": "", "tags": []}
+
     if not content:
         logger.warning("[_parse_writer_output] 输入内容为空")
         return result
-    
+
     # 打印原始内容的最后 200 个字符，用于调试标签问题
     logger.info(f"[_parse_writer_output] 开始解析，输入长度: {len(content)}")
-    logger.info(f"[_parse_writer_output] 原始内容末尾 200 字符: ...{content[-200:] if len(content) > 200 else content}")
-    
-    lines = content.split('\n')
+    logger.info(
+        f"[_parse_writer_output] 原始内容末尾 200 字符: ...{content[-200:] if len(content) > 200 else content}"
+    )
+
+    lines = content.split("\n")
     content_started = False
     content_lines = []
-    
+
     for line in lines:
         line_stripped = line.strip()
-        
+
         # 解析 TITLE:
         if line_stripped.upper().startswith("TITLE:"):
             result["title"] = line_stripped[6:].strip()
-            logger.debug(f"[_parse_writer_output] 解析到 TITLE: {result['title'][:30]}...")
+            logger.debug(
+                f"[_parse_writer_output] 解析到 TITLE: {result['title'][:30]}..."
+            )
             continue
-        
+
         # 解析 EMOJI:
         if line_stripped.upper().startswith("EMOJI:"):
             result["emoji"] = line_stripped[6:].strip()
             continue
-        
+
         # 解析 THEME:
         if line_stripped.upper().startswith("THEME:"):
             result["theme"] = line_stripped[6:].strip()
             continue
-        
+
         # 解析 CONTENT: 开始
         if line_stripped.upper().startswith("CONTENT:"):
             content_started = True
@@ -793,97 +897,106 @@ def _parse_writer_output(content: str) -> Dict[str, Any]:
                 content_lines.append(remaining)
             logger.debug(f"[_parse_writer_output] 检测到 CONTENT: 标记，开始收集正文")
             continue
-        
+
         # 收集正文内容
         if content_started:
             content_lines.append(line)
-    
+
     # 合并正文
-    full_content = '\n'.join(content_lines).strip()
+    full_content = "\n".join(content_lines).strip()
     logger.debug(f"[_parse_writer_output] 收集到正文长度: {len(full_content)}")
-    
+
     # 提取标签 (以 # 开头的词，支持中文和英文)
     # 匹配 #标签 格式，标签可以包含中文、英文、数字
-    tag_pattern = r'#([\w\u4e00-\u9fff]+)'
+    tag_pattern = r"#([\w\u4e00-\u9fff]+)"
     tags = re.findall(tag_pattern, full_content)
     result["tags"] = tags
-    logger.info(f"[_parse_writer_output] 提取到标签: {tags}, 正文中包含 # 的位置: {[i for i, c in enumerate(full_content) if c == '#']}")
-    
+    logger.info(
+        f"[_parse_writer_output] 提取到标签: {tags}, 正文中包含 # 的位置: {[i for i, c in enumerate(full_content) if c == '#']}"
+    )
+
     # 移除标签行，保留纯正文
     # 标签通常在最后一行
-    content_without_tags = re.sub(r'\n*#[\w\u4e00-\u9fff]+(\s+#[\w\u4e00-\u9fff]+)*\s*$', '', full_content).strip()
+    content_without_tags = re.sub(
+        r"\n*#[\w\u4e00-\u9fff]+(\s+#[\w\u4e00-\u9fff]+)*\s*$", "", full_content
+    ).strip()
     result["content"] = content_without_tags
-    
-    logger.info(f"[_parse_writer_output] 解析完成: title_len={len(result['title'])}, content_len={len(result['content'])}, tags={len(result['tags'])}")
-    
+
+    logger.info(
+        f"[_parse_writer_output] 解析完成: title_len={len(result['title'])}, content_len={len(result['content'])}, tags={len(result['tags'])}"
+    )
+
     return result
 
 
 def _parse_analyst_output(content: str) -> Dict[str, Any]:
     """
     解析 Analyst 输出的格式
-    
+
     Analyst 输出格式:
     SUMMARY: [核心观点]
     INSIGHT: [深度洞察]
     TITLE: [主标题]
     SUB: [副标题]
-    
+
     Args:
         content: Analyst 的原始输出
-        
+
     Returns:
         解析后的字典，包含 summary, insight, title, subtitle
     """
     import re
-    
-    result = {
-        "summary": "",
-        "insight": "",
-        "title": "",
-        "subtitle": ""
-    }
-    
+
+    result = {"summary": "", "insight": "", "title": "", "subtitle": ""}
+
     if not content:
         return result
-    
+
     # 使用正则提取各字段
     # SUMMARY: 可能跨行，直到下一个标记
-    summary_match = re.search(r'SUMMARY:\s*(.+?)(?=\n(?:INSIGHT|TITLE|SUB):|$)', content, re.DOTALL | re.IGNORECASE)
+    summary_match = re.search(
+        r"SUMMARY:\s*(.+?)(?=\n(?:INSIGHT|TITLE|SUB):|$)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
     if summary_match:
         result["summary"] = summary_match.group(1).strip()
-    
-    insight_match = re.search(r'INSIGHT:\s*(.+?)(?=\n(?:SUMMARY|TITLE|SUB):|$)', content, re.DOTALL | re.IGNORECASE)
+
+    insight_match = re.search(
+        r"INSIGHT:\s*(.+?)(?=\n(?:SUMMARY|TITLE|SUB):|$)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
     if insight_match:
         result["insight"] = insight_match.group(1).strip()
-    
-    title_match = re.search(r'TITLE:\s*(.+?)(?=\n|$)', content, re.IGNORECASE)
+
+    title_match = re.search(r"TITLE:\s*(.+?)(?=\n|$)", content, re.IGNORECASE)
     if title_match:
         result["title"] = title_match.group(1).strip()
-    
-    sub_match = re.search(r'SUB:\s*(.+?)(?=\n|$)', content, re.IGNORECASE)
+
+    sub_match = re.search(r"SUB:\s*(.+?)(?=\n|$)", content, re.IGNORECASE)
     if sub_match:
         result["subtitle"] = sub_match.group(1).strip()
-    
+
     return result
 
 
 def _extract_result_data(
     event: Dict[str, Any],
     agent_name: str,
-    summary_ref: Dict,
-    insight_ref: Dict,
-    title_ref: Dict,
-    subtitle_ref: Dict,
-    content_ref: Dict,
-    tags_ref: Dict,
-    cards_ref: Dict,
-    ai_images_ref: Dict,
-    output_file_ref: Dict,
+    summary_ref: Dict[str, Any],
+    insight_ref: Dict[str, Any],
+    title_ref: Dict[str, Any],
+    subtitle_ref: Dict[str, Any],
+    content_ref: Dict[str, Any],
+    tags_ref: Dict[str, Any],
+    cards_ref: Dict[str, Any],
+    ai_images_ref: Dict[str, Any],
+    output_file_ref: Dict[str, Any],
 ) -> None:
     """
     从事件中提取结果数据
-    
+
     使用引用字典来模拟可变参数
     """
     # 提取 summary 和 insight
@@ -891,7 +1004,7 @@ def _extract_result_data(
         summary_ref["value"] = event["summary"]
     if event.get("insight"):
         insight_ref["value"] = event["insight"]
-    
+
     # 提取 writer 结果
     if agent_name == "writer":
         result = event.get("result", {})
@@ -904,14 +1017,16 @@ def _extract_result_data(
                 content_ref["value"] = result["content"]
             if result.get("tags"):
                 tags_ref["value"] = result["tags"]
-    
+
     # 提取图片生成结果
     if agent_name == "image_generator" or agent_name.lower() == "image generator":
         # 优先从 image_urls 获取（后端 SSE 发送的格式）
         img_urls = event.get("image_urls", [])
         if img_urls:
             ai_images_ref["value"] = img_urls
-            logger.debug(f"[_extract_result_data] 从 image_urls 获取到 {len(img_urls)} 张图片")
+            logger.debug(
+                f"[_extract_result_data] 从 image_urls 获取到 {len(img_urls)} 张图片"
+            )
         else:
             # 兼容旧格式 result.images
             result = event.get("result", {})
@@ -920,7 +1035,7 @@ def _extract_result_data(
                     ai_images_ref["value"] = result["images"]
                 if result.get("cards"):
                     cards_ref["value"] = result["cards"]
-    
+
     # 提取输出文件
     if event.get("output_file"):
         output_file_ref["value"] = event["output_file"]
@@ -942,6 +1057,7 @@ __all__ = [
 # ============================================================
 # 话题卡片生成
 # ============================================================
+
 
 async def generate_topic_cards(
     job_id: str,

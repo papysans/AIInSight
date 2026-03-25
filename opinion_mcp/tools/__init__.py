@@ -17,6 +17,8 @@ MCP Tools - AI 话题分析工具集
 # 分析相关工具
 from opinion_mcp.tools.analyze import (
     analyze_topic,
+    retrieve_and_report,
+    submit_analysis_result,
     get_analysis_status,
     get_analysis_result,
     update_copywriting,
@@ -29,6 +31,8 @@ from opinion_mcp.tools.publish import (
     xhs_login,
     get_xhs_login_qrcode,
     reset_xhs_login,
+    submit_xhs_verification,
+    check_xhs_login_session,
     upload_xhs_cookies,
     get_xhs_login_qrcode_v2,
     poll_xhs_login_v2,
@@ -57,6 +61,8 @@ from opinion_mcp.tools.ai_daily import (
 __all__ = [
     # 分析相关
     "analyze_topic",
+    "retrieve_and_report",
+    "submit_analysis_result",
     "get_analysis_status",
     "get_analysis_result",
     "update_copywriting",
@@ -66,6 +72,8 @@ __all__ = [
     "xhs_login",
     "get_xhs_login_qrcode",
     "reset_xhs_login",
+    "submit_xhs_verification",
+    "check_xhs_login_session",
     "upload_xhs_cookies",
     "get_xhs_login_qrcode_v2",
     "poll_xhs_login_v2",

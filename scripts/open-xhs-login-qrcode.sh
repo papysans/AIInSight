@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPRECATED: This helper was designed for the previous QR file workflow.
+# The current ShunL flow returns `session_id` and supports `check_xhs_login_session` + `submit_xhs_verification`.
 
 set -euo pipefail
 

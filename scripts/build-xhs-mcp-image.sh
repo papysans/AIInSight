@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED: This script was for building xpzouying/xiaohongshu-mcp ARM64 images.
+# The project now uses ShunL12324/xhs-mcp via Dockerfile.xhs-mcp (Node.js + Playwright).
+# Use: docker compose build xhs-mcp
 
 set -euo pipefail
 

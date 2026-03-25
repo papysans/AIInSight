@@ -19,108 +19,121 @@ from opinion_mcp.schemas import (
 )
 
 
+def _account_key(account_id: Optional[str] = None) -> str:
+    return account_id or "_default"
+
+
 class WebhookManager:
     """
     Webhook 管理器
-    
+
     负责:
     - 注册 Webhook 回调 URL
     - 推送进度事件到回调 URL
     - 实现重试逻辑（3次，指数退避: 1s, 2s, 4s）
     """
-    
+
     # 重试配置
     MAX_RETRIES = 3
     BASE_DELAY = 1.0  # 基础延迟（秒）
-    
+
     def __init__(self):
         """初始化 Webhook 管理器"""
-        # job_id -> callback_url 映射
-        self._webhooks: Dict[str, str] = {}
+        self._webhooks: Dict[str, Dict[str, str]] = {}
         # HTTP 客户端配置
         self._timeout = httpx.Timeout(10.0, connect=5.0)
-    
-    def register(self, job_id: str, callback_url: str) -> bool:
+
+    def register(
+        self, job_id: str, callback_url: str, account_id: Optional[str] = None
+    ) -> bool:
         """
         注册 Webhook 回调 URL
-        
+
         Args:
             job_id: 任务 ID
             callback_url: 回调 URL
-            
+
         Returns:
             是否注册成功
         """
         if not job_id or not callback_url:
-            logger.warning(f"Invalid webhook registration: job_id={job_id}, url={callback_url}")
+            logger.warning(
+                f"Invalid webhook registration: job_id={job_id}, url={callback_url}"
+            )
             return False
-        
-        self._webhooks[job_id] = callback_url
+
+        self._webhooks.setdefault(_account_key(account_id), {})[job_id] = callback_url
         logger.info(f"Webhook registered: job_id={job_id}, url={callback_url}")
         return True
-    
-    def unregister(self, job_id: str) -> bool:
+
+    def unregister(self, job_id: str, account_id: Optional[str] = None) -> bool:
         """
         取消注册 Webhook
-        
+
         Args:
             job_id: 任务 ID
-            
+
         Returns:
             是否取消成功
         """
-        if job_id in self._webhooks:
-            del self._webhooks[job_id]
+        account_hooks = self._webhooks.setdefault(_account_key(account_id), {})
+        if job_id in account_hooks:
+            del account_hooks[job_id]
             logger.info(f"Webhook unregistered: job_id={job_id}")
             return True
         return False
-    
-    def get_callback_url(self, job_id: str) -> Optional[str]:
+
+    def get_callback_url(
+        self, job_id: str, account_id: Optional[str] = None
+    ) -> Optional[str]:
         """
         获取任务的回调 URL
-        
+
         Args:
             job_id: 任务 ID
-            
+
         Returns:
             回调 URL，如果未注册则返回 None
         """
-        return self._webhooks.get(job_id)
-    
-    def has_webhook(self, job_id: str) -> bool:
+        return self._webhooks.setdefault(_account_key(account_id), {}).get(job_id)
+
+    def has_webhook(self, job_id: str, account_id: Optional[str] = None) -> bool:
         """
         检查任务是否注册了 Webhook
-        
+
         Args:
             job_id: 任务 ID
-            
+
         Returns:
             是否已注册
         """
-        return job_id in self._webhooks
-    
+        return job_id in self._webhooks.setdefault(_account_key(account_id), {})
+
     async def push(
         self,
         job_id: str,
         event_type: EventType,
         data: Optional[WebhookData] = None,
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送进度事件到 Webhook
-        
+
         Args:
             job_id: 任务 ID
             event_type: 事件类型
             data: 事件数据
-            
+
         Returns:
             是否推送成功
         """
-        callback_url = self._webhooks.get(job_id)
+        callback_url = self._webhooks.setdefault(_account_key(account_id), {}).get(
+            job_id
+        )
         if not callback_url:
             logger.debug(f"No webhook registered for job_id={job_id}, skipping push")
             return False
-        
+
         # 构建 Webhook 载荷
         payload = WebhookPayload(
             job_id=job_id,
@@ -128,10 +141,10 @@ class WebhookManager:
             timestamp=datetime.now(),
             data=data or WebhookData(),
         )
-        
+
         # 执行推送（带重试）
         return await self._push_with_retry(callback_url, payload)
-    
+
     async def _push_with_retry(
         self,
         callback_url: str,
@@ -139,18 +152,18 @@ class WebhookManager:
     ) -> bool:
         """
         带重试逻辑的推送
-        
+
         重试策略: 最多 3 次，指数退避 (1s, 2s, 4s)
-        
+
         Args:
             callback_url: 回调 URL
             payload: Webhook 载荷
-            
+
         Returns:
             是否推送成功
         """
         last_error: Optional[Exception] = None
-        
+
         for attempt in range(self.MAX_RETRIES):
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -159,7 +172,7 @@ class WebhookManager:
                         json=payload.model_dump(mode="json"),
                         headers={"Content-Type": "application/json"},
                     )
-                    
+
                     if response.status_code >= 200 and response.status_code < 300:
                         logger.debug(
                             f"Webhook push success: job_id={payload.job_id}, "
@@ -172,35 +185,37 @@ class WebhookManager:
                             f"Webhook push failed with status {response.status_code}: "
                             f"job_id={payload.job_id}, attempt={attempt + 1}/{self.MAX_RETRIES}"
                         )
-                        last_error = Exception(f"HTTP {response.status_code}: {response.text}")
-                        
+                        last_error = Exception(
+                            f"HTTP {response.status_code}: {response.text}"
+                        )
+
             except httpx.TimeoutException as e:
                 logger.warning(
                     f"Webhook push timeout: job_id={payload.job_id}, "
                     f"attempt={attempt + 1}/{self.MAX_RETRIES}, error={e}"
                 )
                 last_error = e
-                
+
             except httpx.RequestError as e:
                 logger.warning(
                     f"Webhook push request error: job_id={payload.job_id}, "
                     f"attempt={attempt + 1}/{self.MAX_RETRIES}, error={e}"
                 )
                 last_error = e
-                
+
             except Exception as e:
                 logger.error(
                     f"Webhook push unexpected error: job_id={payload.job_id}, "
                     f"attempt={attempt + 1}/{self.MAX_RETRIES}, error={e}"
                 )
                 last_error = e
-            
+
             # 如果不是最后一次尝试，等待后重试
             if attempt < self.MAX_RETRIES - 1:
-                delay = self.BASE_DELAY * (2 ** attempt)  # 指数退避: 1s, 2s, 4s
+                delay = self.BASE_DELAY * (2**attempt)  # 指数退避: 1s, 2s, 4s
                 logger.debug(f"Retrying webhook push in {delay}s...")
                 await asyncio.sleep(delay)
-        
+
         # 所有重试都失败
         logger.error(
             f"Webhook push failed after {self.MAX_RETRIES} attempts: "
@@ -208,20 +223,21 @@ class WebhookManager:
             f"url={callback_url}, last_error={last_error}"
         )
         return False
-    
+
     # ============================================================
     # 便捷推送方法
     # ============================================================
-    
+
     async def push_started(
         self,
         job_id: str,
         topic: str,
         sources: list[str],
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送任务开始事件
-        
+
         Args:
             job_id: 任务 ID
             topic: 分析话题
@@ -233,8 +249,8 @@ class WebhookManager:
             progress=0,
             message=f"🚀 开始分析话题: {topic}",
         )
-        return await self.push(job_id, EventType.STARTED, data)
-    
+        return await self.push(job_id, EventType.STARTED, data, account_id=account_id)
+
     async def push_progress(
         self,
         job_id: str,
@@ -242,10 +258,11 @@ class WebhookManager:
         step_name: str,
         progress: int,
         message: str,
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送进度更新事件
-        
+
         Args:
             job_id: 任务 ID
             step: 当前步骤代码
@@ -259,8 +276,8 @@ class WebhookManager:
             progress=progress,
             message=message,
         )
-        return await self.push(job_id, EventType.PROGRESS, data)
-    
+        return await self.push(job_id, EventType.PROGRESS, data, account_id=account_id)
+
     async def push_platform_done(
         self,
         job_id: str,
@@ -268,10 +285,11 @@ class WebhookManager:
         platform_name: str,
         count: int,
         progress: int,
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送来源检索完成事件
-        
+
         Args:
             job_id: 任务 ID
             platform: 来源代码
@@ -288,8 +306,10 @@ class WebhookManager:
             source_name=platform_name,
             source_count=count,
         )
-        return await self.push(job_id, EventType.PLATFORM_DONE, data)
-    
+        return await self.push(
+            job_id, EventType.PLATFORM_DONE, data, account_id=account_id
+        )
+
     async def push_step_change(
         self,
         job_id: str,
@@ -297,10 +317,11 @@ class WebhookManager:
         step_name: str,
         progress: int,
         message: Optional[str] = None,
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送步骤变更事件
-        
+
         Args:
             job_id: 任务 ID
             step: 新步骤代码
@@ -314,17 +335,20 @@ class WebhookManager:
             progress=progress,
             message=message or f"🔄 {step_name}...",
         )
-        return await self.push(job_id, EventType.STEP_CHANGE, data)
-    
+        return await self.push(
+            job_id, EventType.STEP_CHANGE, data, account_id=account_id
+        )
+
     async def push_completed(
         self,
         job_id: str,
         result: Optional[AnalysisResult] = None,
         duration_minutes: Optional[float] = None,
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送任务完成事件
-        
+
         Args:
             job_id: 任务 ID
             result: 分析结果
@@ -335,7 +359,7 @@ class WebhookManager:
             minutes = int(duration_minutes)
             seconds = int((duration_minutes - minutes) * 60)
             message = f"🎉 分析完成！耗时{minutes}分{seconds}秒"
-        
+
         data = WebhookData(
             step="finished",
             step_name="完成",
@@ -343,17 +367,18 @@ class WebhookManager:
             message=message,
             result=result,
         )
-        return await self.push(job_id, EventType.COMPLETED, data)
-    
+        return await self.push(job_id, EventType.COMPLETED, data, account_id=account_id)
+
     async def push_failed(
         self,
         job_id: str,
         error: str,
         step: Optional[str] = None,
+        account_id: Optional[str] = None,
     ) -> bool:
         """
         推送任务失败事件
-        
+
         Args:
             job_id: 任务 ID
             error: 错误信息
@@ -366,7 +391,7 @@ class WebhookManager:
             message=f"❌ 分析失败: {error}",
             error=error,
         )
-        return await self.push(job_id, EventType.FAILED, data)
+        return await self.push(job_id, EventType.FAILED, data, account_id=account_id)
 
 
 # 全局单例

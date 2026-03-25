@@ -27,6 +27,43 @@ class AgentState(BaseModel):
     final_copy: Optional[str] = None
 
 
+class RetrieveAndReportRequest(BaseModel):
+    topic: str
+    depth: str = "standard"
+    source_groups: Optional[List[str]] = None
+    source_names: Optional[List[str]] = None
+    evidence_mode: str = "full"
+
+
+class RetrieveAndReportResponse(BaseModel):
+    topic: str
+    evidence_bundle: Optional[Dict[str, Any]] = None
+    source_stats: Dict[str, int] = Field(default_factory=dict)
+    news_content: str = ""
+    messages: List[str] = Field(default_factory=list)
+    safety_blocked: bool = False
+    safety_reason: Optional[str] = None
+
+
+class SubmitAnalysisResultRequest(BaseModel):
+    topic: str
+    news_content: str
+    final_analysis: str
+    debate_history: List[str] = Field(default_factory=list)
+    source_stats: Dict[str, int] = Field(default_factory=dict)
+    image_count: int = 0
+    xhs_publish_enabled: bool = False
+
+
+class SubmitAnalysisResultResponse(BaseModel):
+    topic: str
+    final_copy: str = ""
+    output_file: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    xhs_publish_result: Optional[Dict[str, Any]] = None
+    messages: List[str] = Field(default_factory=list)
+
+
 class EvidenceItem(BaseModel):
     """A single piece of evidence with optional full text"""
 
@@ -196,6 +233,16 @@ class XhsLoginQrcodeResponse(BaseModel):
     expires_at: Optional[str] = None
     login_method: Optional[str] = None  # "xhs-mcp" or "playwright"
     session_id: Optional[str] = None  # Playwright login session ID
+
+
+class XhsVerificationRequest(BaseModel):
+    session_id: str
+    code: str
+
+
+class XhsVerificationResponse(BaseModel):
+    success: bool
+    message: str
 
 
 # ============================================================

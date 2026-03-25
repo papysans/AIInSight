@@ -1,0 +1,43 @@
+# ShunL12324/xhs-mcp — Node.js + Playwright Chromium
+# HTTP MCP server for Xiaohongshu (小红书)
+# Uses Node.js (not Bun) because better-sqlite3 requires Node native addons
+
+FROM node:20-slim AS base
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
+    libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
+    fonts-noto-cjk fonts-noto-color-emoji \
+    curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY xhs-mcp-entrypoint.mjs ./entrypoint.mjs
+
+RUN npm install --save @sillyl12324/xhs-mcp@latest @hono/node-server hono && \
+    npx playwright install --with-deps chromium && \
+    npm cache clean --force
+
+RUN groupadd -g 1001 xhsmcp && \
+    useradd -u 1001 -g xhsmcp -m -s /bin/bash xhsmcp
+
+RUN mkdir -p /data /ms-playwright && chown -R xhsmcp:xhsmcp /data /app /ms-playwright
+
+ENV XHS_MCP_HEADLESS=true
+ENV XHS_MCP_DATA_DIR=/data
+ENV XHS_MCP_PORT=18060
+ENV XHS_MCP_LOG_LEVEL=info
+
+EXPOSE 18060
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:18060/health || exit 1
+
+USER xhsmcp
+
+CMD ["node", "entrypoint.mjs"]

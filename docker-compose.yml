@@ -14,7 +14,6 @@ services:
       - XHS_LOGIN_QRCODE_TIMEOUT_SECONDS=${XHS_LOGIN_QRCODE_TIMEOUT_SECONDS:-60}
       - TZ=${TZ:-Asia/Shanghai}
       - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
-      - XHS_COOKIES_PATH=runtime/xhs/data/cookies.json
       - XHS_IMAGE_API_DIR=/app/runtime/xhs/images
       - XHS_IMAGE_MCP_DIR=/app/images
     volumes:
@@ -55,19 +54,22 @@ services:
       - xhs-mcp
 
   xhs-mcp:
-    image: ${XHS_MCP_IMAGE:-xpzouying/xiaohongshu-mcp}
-    platform: ${XHS_MCP_PLATFORM:-linux/amd64}
+    build:
+      context: .
+      dockerfile: Dockerfile.xhs-mcp
     container_name: aiinsight-xhs-mcp
     restart: unless-stopped
     init: true
     tty: true
     environment:
-      ROD_BROWSER_BIN: ${XHS_MCP_BROWSER_BIN:-/usr/bin/google-chrome}
-      COOKIES_PATH: /app/data/cookies.json
-      XHS_PROXY: ${XHS_PROXY:-}
+      XHS_MCP_HEADLESS: "true"
+      XHS_MCP_DATA_DIR: /data
+      XHS_MCP_PORT: "18060"
+      XHS_MCP_REQUEST_INTERVAL: ${XHS_MCP_REQUEST_INTERVAL:-2000}
+      XHS_MCP_LOG_LEVEL: ${XHS_MCP_LOG_LEVEL:-info}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      - ./runtime/xhs/data:/app/data
+      - ./runtime/xhs/data:/data
       - ./runtime/xhs/images:/app/images
     ports:
       - "${XHS_MCP_PORT:-18060}:18060"

@@ -267,7 +267,16 @@ def _topic_to_rank_item(topic, rank: int) -> Dict[str, Any]:
 
 
 def _default_ranking_title(date_text: str, limit: int) -> str:
-    return f"{date_text} AI 热点榜单 Top {limit}"
+    # XHS title limit is 20 chars. Compact format: "M/DD AI热点榜Top10"
+    try:
+        from datetime import datetime as _dt
+
+        d = _dt.strptime(date_text, "%Y-%m-%d")
+        short_date = f"{d.month}/{d.day:02d}"
+    except (ValueError, TypeError):
+        short_date = date_text[-5:]
+    title = f"{short_date} AI热点榜Top{limit}"
+    return title[:20]
 
 
 def _default_ranking_content(date_text: str, topics: List[Any]) -> str:
@@ -353,6 +362,8 @@ async def publish_ai_daily_ranking(
         return {"success": False, "error": "今日榜单为空，无法发布"}
 
     title_text = title or _default_ranking_title(ranking.date, len(topics))
+    if len(title_text) > 20:
+        title_text = title_text[:20]
     content_text = content or _default_ranking_content(ranking.date, topics)
     final_tags = await _default_ranking_tags(topics, tags)
 

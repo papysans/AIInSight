@@ -222,7 +222,7 @@ async def test_publish_ai_daily_ranking_preserves_explicit_content_override(
     async def fake_default_tags(topics, custom_tags=None):
         return ["AI热点"]
 
-    async def fake_publish_content(title, content, images, tags=None):
+    async def fake_publish_content(title, content, images, tags=None, account_id=None):
         captured.update(
             {"title": title, "content": content, "images": images, "tags": tags}
         )
@@ -303,7 +303,7 @@ async def test_publish_ai_daily_ranking_uses_generated_editorial_copy_by_default
     async def fake_default_tags(topics, custom_tags=None):
         return ["AI热点", "人工智能"]
 
-    async def fake_publish_content(title, content, images, tags=None):
+    async def fake_publish_content(title, content, images, tags=None, account_id=None):
         captured.update(
             {"title": title, "content": content, "images": images, "tags": tags}
         )

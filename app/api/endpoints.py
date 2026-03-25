@@ -1,10 +1,14 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 from loguru import logger
 from app.schemas import (
     TopicAnalysisRequest,
+    RetrieveAndReportRequest,
+    RetrieveAndReportResponse,
+    SubmitAnalysisResultRequest,
+    SubmitAnalysisResultResponse,
     AgentState,
     ConfigResponse,
     ConfigUpdateRequest,
@@ -37,7 +41,12 @@ from app.schemas import (
     AiDailyRankingPublishRequest,
     TopicCardsRequest,
 )
-from app.services.workflow import app_graph
+from app.services.workflow import (
+    app_graph,
+    GraphState,
+    run_retrieve_and_report,
+    run_submit_analysis_result,
+)
 from app.services.workflow_status import workflow_status
 from app.services.user_settings import load_user_settings, update_user_settings
 from app.services.topic_card_builder import (
@@ -46,10 +55,15 @@ from app.services.topic_card_builder import (
     build_topic_timeline,
 )
 from app.config import settings
+from app.services.account_context import get_account_id
 from pathlib import Path
 from datetime import datetime
 import asyncio
 import copy
+
+
+_RETRIEVE_AND_REPORT_TIMEOUT_SECONDS = 120
+_SUBMIT_ANALYSIS_RESULT_TIMEOUT_SECONDS = 180
 
 router = APIRouter()
 
@@ -95,7 +109,13 @@ def _get_card_preview_public_base_url() -> str:
 
 
 def _get_card_preview_output_dir() -> Path:
-    return Path(settings.AI_DAILY_CONFIG["preview_output_dir"]).resolve()
+    preview_dir = settings.AI_DAILY_CONFIG.get("preview_output_dir")
+    preview_dir_str = (
+        preview_dir
+        if isinstance(preview_dir, str) and preview_dir
+        else "outputs/card_previews"
+    )
+    return (Path(preview_dir_str) / get_account_id()).resolve()
 
 
 def _build_card_preview_urls(request: Request, filename: str) -> tuple[str, str]:
@@ -182,10 +202,12 @@ async def analyze_topic(request: TopicAnalysisRequest):
         f"[analyze] topic='{request.topic}', depth={depth}, debate_rounds={debate_rounds}, image_count={image_count}"
     )
 
-    await workflow_status.start_workflow(request.topic)
+    account_id = get_account_id()
+
+    await workflow_status.start_workflow(request.topic, account_id=account_id)
 
     async def event_generator():
-        initial_state = {
+        initial_state: Dict[str, Any] = {
             "topic": request.topic,
             "source_groups": request.source_groups or settings.DEFAULT_SOURCE_GROUPS,
             "source_names": request.source_names,
@@ -198,9 +220,11 @@ async def analyze_topic(request: TopicAnalysisRequest):
         }
 
         try:
-            async for event in app_graph.astream(initial_state):
+            async for event in app_graph.astream(
+                cast(GraphState, cast(object, initial_state))
+            ):
                 for node_name, state_update in event.items():
-                    await workflow_status.update_step(node_name)
+                    await workflow_status.update_step(node_name, account_id=account_id)
 
                     messages = state_update.get("messages", [])
                     content = str(messages[-1]) if messages else "Processing..."
@@ -244,7 +268,7 @@ async def analyze_topic(request: TopicAnalysisRequest):
 
                     yield f"data: {agent_state.model_dump_json()}\n\n"
 
-            await workflow_status.finish_workflow()
+            await workflow_status.finish_workflow(account_id=account_id)
 
             final_state = AgentState(
                 agent_name="System",
@@ -254,7 +278,7 @@ async def analyze_topic(request: TopicAnalysisRequest):
             yield f"data: {final_state.model_dump_json()}\n\n"
 
         except Exception as e:
-            await workflow_status.reset()
+            await workflow_status.reset(account_id=account_id)
             error_state = AgentState(
                 agent_name="System",
                 step_content=f"Error: {str(e)}",
@@ -263,6 +287,49 @@ async def analyze_topic(request: TopicAnalysisRequest):
             yield f"data: {error_state.model_dump_json()}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/retrieve-and-report", response_model=RetrieveAndReportResponse)
+async def retrieve_and_report(request: RetrieveAndReportRequest):
+    if request.evidence_mode not in {"full", "summary"}:
+        raise HTTPException(
+            status_code=400, detail="evidence_mode 仅支持 full 或 summary"
+        )
+
+    result = await asyncio.wait_for(
+        run_retrieve_and_report(
+            {
+                "topic": request.topic,
+                "source_groups": request.source_groups,
+                "source_names": request.source_names,
+                "depth": request.depth,
+                "evidence_mode": request.evidence_mode,
+                "account_id": get_account_id(),
+            }
+        ),
+        timeout=_RETRIEVE_AND_REPORT_TIMEOUT_SECONDS,
+    )
+    return RetrieveAndReportResponse(**result)
+
+
+@router.post("/submit-analysis-result", response_model=SubmitAnalysisResultResponse)
+async def submit_analysis_result(request: SubmitAnalysisResultRequest):
+    result = await asyncio.wait_for(
+        run_submit_analysis_result(
+            {
+                "topic": request.topic,
+                "news_content": request.news_content,
+                "final_analysis": request.final_analysis,
+                "debate_history": request.debate_history,
+                "source_stats": request.source_stats,
+                "image_count": request.image_count,
+                "xhs_publish_enabled": request.xhs_publish_enabled,
+                "account_id": get_account_id(),
+            }
+        ),
+        timeout=_SUBMIT_ANALYSIS_RESULT_TIMEOUT_SECONDS,
+    )
+    return SubmitAnalysisResultResponse(**result)
 
 
 @router.get("/config", response_model=ConfigResponse)
@@ -299,7 +366,7 @@ async def update_config(request: ConfigUpdateRequest):
     if request.debate_max_rounds is not None:
         if request.debate_max_rounds < 1:
             raise HTTPException(status_code=400, detail="debate_max_rounds 必须大于0")
-        settings.DEBATE_MAX_ROUNDS = request.debate_max_rounds
+        setattr(settings, "DEBATE_MAX_ROUNDS", int(request.debate_max_rounds))
         updated_fields.append("debate_max_rounds")
 
     if not updated_fields:
@@ -315,7 +382,7 @@ async def update_config(request: ConfigUpdateRequest):
 @router.get("/user-settings", response_model=UserSettingsResponse)
 async def get_user_settings():
     """获取前端可写入的用户设置（存储在 cache/user_settings.json）"""
-    data = load_user_settings()
+    data = load_user_settings(get_account_id())
     return UserSettingsResponse(
         llm_apis=data.get("llm_apis") or [],
         volcengine=data.get("volcengine"),
@@ -337,7 +404,7 @@ async def put_user_settings(request: UserSettingsUpdateRequest):
             ):
                 available_models = settings.get_models_for_provider(provider_key)
                 model_names = (
-                    [item["id"] for item in available_models]
+                    [str(item["id"]) for item in available_models]
                     if available_models
                     else []
                 )
@@ -355,7 +422,7 @@ async def put_user_settings(request: UserSettingsUpdateRequest):
             if provider and model and not settings.validate_model(provider, model):
                 available_models = settings.get_models_for_provider(provider)
                 model_names = (
-                    [item["id"] for item in available_models]
+                    [str(item["id"]) for item in available_models]
                     if available_models
                     else []
                 )
@@ -365,6 +432,7 @@ async def put_user_settings(request: UserSettingsUpdateRequest):
                 )
 
     merged = update_user_settings(
+        account_id=get_account_id(),
         llm_apis=[api.model_dump() for api in request.llm_apis]
         if request.llm_apis is not None
         else None,
@@ -384,7 +452,7 @@ async def put_user_settings(request: UserSettingsUpdateRequest):
 @router.get("/outputs", response_model=OutputFileListResponse)
 async def get_output_files(limit: int = 20, offset: int = 0):
     """获取历史输出文件列表"""
-    output_dir = Path("outputs")
+    output_dir = Path("outputs") / get_account_id()
     if not output_dir.exists():
         return OutputFileListResponse(files=[], total=0)
 
@@ -432,7 +500,7 @@ async def get_output_file(filename: str):
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="无效的文件名")
 
-    file_path = Path("outputs") / filename
+    file_path = Path("outputs") / get_account_id() / filename
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -457,7 +525,7 @@ async def get_output_file(filename: str):
 @router.get("/workflow/status", response_model=WorkflowStatusResponse)
 async def get_workflow_status():
     """获取当前工作流状态"""
-    status = await workflow_status.get_status()
+    status = await workflow_status.get_status(account_id=get_account_id())
     return WorkflowStatusResponse(**status)
 
 
@@ -483,7 +551,7 @@ async def get_models():
 
 
 @router.post("/validate-model")
-async def validate_model(payload: dict):
+async def validate_model(payload: Dict[str, Any]):
     """验证提供商-模型组合是否有效
 
     请求体：
@@ -512,7 +580,7 @@ async def validate_model(payload: dict):
         # 获取该提供商的可用模型列表
         available_models = settings.get_models_for_provider(provider)
         if available_models:
-            model_names = [m["id"] for m in available_models]
+            model_names = [str(m["id"]) for m in available_models]
             return {
                 "valid": False,
                 "message": f"模型 {model} 在提供商 {provider} 中无效。可用模型: {', '.join(model_names)}",
@@ -528,12 +596,12 @@ async def validate_model(payload: dict):
 
 
 @router.get("/xhs/status")
-async def get_xhs_status():
+async def get_xhs_status(account_id: Optional[str] = None):
     """检查小红书 MCP 服务状态和登录状态"""
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
     from app.schemas import XhsStatusResponse
 
-    status = await xiaohongshu_publisher.get_status()
+    status = await xiaohongshu_publisher.get_status(account_id=account_id)
     return XhsStatusResponse(
         mcp_available=status.get("mcp_available", False),
         login_status=status.get("login_status", False),
@@ -542,11 +610,11 @@ async def get_xhs_status():
 
 
 @router.get("/xhs/login-qrcode", response_model=XhsLoginQrcodeResponse)
-async def get_xhs_login_qrcode(request: Request):
+async def get_xhs_login_qrcode(request: Request, account_id: Optional[str] = None):
     """生成并返回小红书登录二维码信息。"""
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    result = await xiaohongshu_publisher.get_login_qrcode()
+    result = await xiaohongshu_publisher.get_login_qrcode(account_id=account_id)
 
     # xhs-mcp returns already_logged_in=True when user is already logged in
     if result.get("already_logged_in"):
@@ -568,7 +636,11 @@ async def get_xhs_login_qrcode(request: Request):
     # Build preview page URL
     preview_base = _get_xhs_qrcode_public_base_url()
     preview_route = "/api/xhs/login-qrcode/preview"
-    qr_preview_url = f"{preview_base}{preview_route}" if preview_base else str(request.url_for("preview_xhs_login_qrcode"))
+    qr_preview_url = (
+        f"{preview_base}{preview_route}"
+        if preview_base
+        else str(request.url_for("preview_xhs_login_qrcode"))
+    )
 
     return XhsLoginQrcodeResponse(
         success=True,
@@ -579,13 +651,16 @@ async def get_xhs_login_qrcode(request: Request):
         qr_preview_url=qr_preview_url,
         qr_ascii=result.get("qr_ascii"),
         expires_at=result.get("expires_at"),
+        session_id=result.get("session_id"),
     )
 
 
 @router.get("/xhs/login-qrcode/file/{filename}", name="get_xhs_login_qrcode_file")
 async def get_xhs_login_qrcode_file(filename: str):
     """返回登录二维码图片文件。"""
-    output_dir = Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login")).resolve()
+    output_dir = (
+        Path(os.getenv("XHS_LOGIN_QRCODE_DIR", "outputs/xhs_login")) / get_account_id()
+    ).resolve()
     file_path = (output_dir / filename).resolve()
 
     if output_dir != file_path.parent or not file_path.is_file():
@@ -599,7 +674,7 @@ async def preview_xhs_login_qrcode(request: Request):
     """HTML 预览页：内嵌 QR 码图片 + 过期倒计时 + 扫码提示。"""
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    meta = xiaohongshu_publisher._load_cached_login_qrcode()
+    meta = xiaohongshu_publisher._load_cached_login_qrcode(account_id=get_account_id())
 
     if not meta or not meta.get("qr_filename"):
         return HTMLResponse(
@@ -666,13 +741,36 @@ async def preview_xhs_login_qrcode(request: Request):
 
 
 @router.post("/xhs/login/reset")
-async def reset_xhs_login():
+async def reset_xhs_login(account_id: Optional[str] = None):
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    return await xiaohongshu_publisher.reset_login()
+    return await xiaohongshu_publisher.reset_login(account_id=account_id)
 
 
-@router.post("/xhs/publish")
+@router.post("/xhs/submit-verification")
+async def submit_xhs_verification(request: Request):
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+    from app.schemas import XhsVerificationRequest, XhsVerificationResponse
+
+    body = await request.json()
+    req = XhsVerificationRequest(**body)
+    result = await xiaohongshu_publisher.submit_verification(
+        req.session_id,
+        req.code,
+        account_id=body.get("account_id"),
+    )
+    return XhsVerificationResponse(**result)
+
+
+@router.get("/xhs/check-login-session/{session_id}")
+async def check_xhs_login_session(session_id: str, account_id: Optional[str] = None):
+    from app.services.xiaohongshu_publisher import xiaohongshu_publisher
+
+    return await xiaohongshu_publisher.check_login_session(
+        session_id, account_id=account_id
+    )
+
+
 async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
     """手动发布内容到小红书
 
@@ -695,6 +793,7 @@ async def publish_to_xhs(request: XhsPublishRequest, http_request: Request):
         content=request.content,
         images=request.images,
         tags=request.tags,
+        account_id=getattr(request, "account_id", None),
     )
     result = _enrich_xhs_publish_result(http_request, result)
 
@@ -969,7 +1068,7 @@ from app.services.ai_daily_pipeline import collect_ai_daily, get_topic_by_id
 
 
 @router.post("/ai-daily/collect", response_model=AiDailyResponse)
-async def ai_daily_collect(request: AiDailyCollectRequest = None):
+async def ai_daily_collect(request: Optional[AiDailyCollectRequest] = None):
     """触发 AI 日报采集 pipeline（collect → score → cluster → cache）"""
     req = request or AiDailyCollectRequest()
     result = await collect_ai_daily(
@@ -996,7 +1095,9 @@ async def ai_daily_topic_detail(topic_id: str):
 
 
 @router.post("/ai-daily/{topic_id}/analyze")
-async def ai_daily_analyze_topic(topic_id: str, request: AiDailyAnalyzeRequest = None):
+async def ai_daily_analyze_topic(
+    topic_id: str, request: Optional[AiDailyAnalyzeRequest] = None
+):
     """对单个 AI 话题运行深度分析 workflow"""
     topic = await get_topic_by_id(topic_id)
     if not topic:
@@ -1010,7 +1111,7 @@ async def ai_daily_analyze_topic(topic_id: str, request: AiDailyAnalyzeRequest =
     workflow_input = topic_to_workflow_input(topic, depth=depth)
 
     # Run the existing analysis workflow
-    result = await app_graph.ainvoke(workflow_input)
+    result = await app_graph.ainvoke(cast(GraphState, cast(object, workflow_input)))
     return {
         "topic_id": topic_id,
         "depth": depth,
@@ -1018,7 +1119,7 @@ async def ai_daily_analyze_topic(topic_id: str, request: AiDailyAnalyzeRequest =
     }
 
 
-def _topic_to_rank_item(topic, rank: int) -> dict:
+def _topic_to_rank_item(topic, rank: int) -> Dict[str, Any]:
     """Map DailyTopic to the {rank, title, score, tags} shape the renderer expects."""
     return {
         "rank": rank,
@@ -1028,7 +1129,7 @@ def _topic_to_rank_item(topic, rank: int) -> dict:
     }
 
 
-def _topic_to_hot_topic_payload(topic) -> dict:
+def _topic_to_hot_topic_payload(topic) -> Dict[str, Any]:
     """Map DailyTopic to the hot-topic card payload."""
     return {
         "title": topic.title,
@@ -1044,7 +1145,7 @@ def _topic_to_hot_topic_payload(topic) -> dict:
 
 @router.post("/ai-daily/ranking/cards")
 async def ai_daily_ranking_cards(
-    http_request: Request, request: AiDailyRankingCardsRequest = None
+    http_request: Request, request: Optional[AiDailyRankingCardsRequest] = None
 ):
     """为今日 AI 热点整榜生成卡片套图"""
     from app.services.publish.ai_daily_publish_service import (
@@ -1067,7 +1168,7 @@ async def ai_daily_ranking_cards(
 
 @router.post("/ai-daily/ranking/publish")
 async def ai_daily_ranking_publish(
-    http_request: Request, request: AiDailyRankingPublishRequest = None
+    http_request: Request, request: Optional[AiDailyRankingPublishRequest] = None
 ):
     """将今日 AI 热点整榜发布到小红书"""
     from app.services.publish.ai_daily_publish_service import publish_ai_daily_ranking
@@ -1086,7 +1187,7 @@ async def ai_daily_ranking_publish(
 
 @router.post("/ai-daily/{topic_id}/cards")
 async def ai_daily_topic_cards(
-    topic_id: str, http_request: Request, request: AiDailyCardsRequest = None
+    topic_id: str, http_request: Request, request: Optional[AiDailyCardsRequest] = None
 ):
     """为单个话题生成卡片套图"""
     topic = await get_topic_by_id(topic_id)
@@ -1125,7 +1226,9 @@ async def ai_daily_topic_cards(
 
 @router.post("/ai-daily/{topic_id}/publish")
 async def ai_daily_publish(
-    topic_id: str, http_request: Request, request: AiDailyPublishRequest = None
+    topic_id: str,
+    http_request: Request,
+    request: Optional[AiDailyPublishRequest] = None,
 ):
     """将 AI 日报话题发布到小红书"""
     from app.services.publish.ai_daily_publish_service import publish_ai_daily_topic

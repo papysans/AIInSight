@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPRECATED: This script was for starting xpzouying/xiaohongshu-mcp locally.
+# Use: docker compose up -d xhs-mcp
 
 set -euo pipefail
 

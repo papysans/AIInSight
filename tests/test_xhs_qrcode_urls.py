@@ -13,7 +13,7 @@ def test_login_qrcode_endpoint_returns_absolute_url_by_default(monkeypatch, tmp_
 
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    async def fake_get_login_qrcode():
+    async def fake_get_login_qrcode(account_id=None):
         return {
             "success": True,
             "message": "请扫码登录",
@@ -22,15 +22,22 @@ def test_login_qrcode_endpoint_returns_absolute_url_by_default(monkeypatch, tmp_
             "expires_at": "2026-03-09T11:44:41",
         }
 
-    monkeypatch.setattr(xiaohongshu_publisher, "get_login_qrcode", fake_get_login_qrcode)
+    monkeypatch.setattr(
+        xiaohongshu_publisher, "get_login_qrcode", fake_get_login_qrcode
+    )
 
     response = client.get("/api/xhs/login-qrcode")
 
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    assert data["qr_image_route"] == "/api/xhs/login-qrcode/file/xhs-login-qrcode-test.png"
-    assert data["qr_image_url"] == "http://testserver/api/xhs/login-qrcode/file/xhs-login-qrcode-test.png"
+    assert (
+        data["qr_image_route"] == "/api/xhs/login-qrcode/file/xhs-login-qrcode-test.png"
+    )
+    assert (
+        data["qr_image_url"]
+        == "http://testserver/api/xhs/login-qrcode/file/xhs-login-qrcode-test.png"
+    )
 
 
 def test_publish_endpoint_uses_dedicated_qrcode_public_base(monkeypatch):
@@ -39,7 +46,7 @@ def test_publish_endpoint_uses_dedicated_qrcode_public_base(monkeypatch):
 
     from app.services.xiaohongshu_publisher import xiaohongshu_publisher
 
-    async def fake_publish_content(title, content, images, tags=None):
+    async def fake_publish_content(title, content, images, tags=None, account_id=None):
         return {
             "success": False,
             "message": "❌ 未登录，请先扫码",
@@ -67,9 +74,18 @@ def test_publish_endpoint_uses_dedicated_qrcode_public_base(monkeypatch):
     data = response.json()
     assert data["success"] is False
     assert data["login_required"] is True
-    assert data["qr_image_route"] == "/api/xhs/login-qrcode/file/xhs-login-qrcode-publish.png"
-    assert data["qr_image_url"] == "https://static.example.com/api/xhs/login-qrcode/file/xhs-login-qrcode-publish.png"
-    assert data["login_qrcode"]["qr_image_url"] == "https://static.example.com/api/xhs/login-qrcode/file/xhs-login-qrcode-publish.png"
+    assert (
+        data["qr_image_route"]
+        == "/api/xhs/login-qrcode/file/xhs-login-qrcode-publish.png"
+    )
+    assert (
+        data["qr_image_url"]
+        == "https://static.example.com/api/xhs/login-qrcode/file/xhs-login-qrcode-publish.png"
+    )
+    assert (
+        data["login_qrcode"]["qr_image_url"]
+        == "https://static.example.com/api/xhs/login-qrcode/file/xhs-login-qrcode-publish.png"
+    )
 
 
 def test_ai_daily_ranking_cards_returns_absolute_preview_urls(monkeypatch):
@@ -106,5 +122,11 @@ def test_ai_daily_ranking_cards_returns_absolute_preview_urls(monkeypatch):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["cards"]["title"]["image_url"] == "http://testserver/api/card-previews/demo-title.png"
-    assert data["cards"]["daily-rank"]["image_url"] == "http://testserver/api/card-previews/demo-daily-rank.png"
+    assert (
+        data["cards"]["title"]["image_url"]
+        == "http://testserver/api/card-previews/demo-title.png"
+    )
+    assert (
+        data["cards"]["daily-rank"]["image_url"]
+        == "http://testserver/api/card-previews/demo-daily-rank.png"
+    )

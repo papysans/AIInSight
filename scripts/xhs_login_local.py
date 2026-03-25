@@ -1,35 +1,44 @@
 #!/Users/napstablook/.pyenv/versions/3.11.9/bin/python
 """
-本地 headed 浏览器登录小红书，导出 cookies 并注入到 xhs-mcp。
-用法: python scripts/xhs_login_local.py
+DEPRECATED: 本脚本属于旧版 cookies 注入工作流。
+
+当前项目默认使用 ShunL12324/xhs-mcp：
+1. 获取二维码: GET /api/xhs/login-qrcode
+2. 轮询状态: GET /api/xhs/check-login-session/{session_id}
+3. 提交验证码: POST /api/xhs/submit-verification
 """
+
 import asyncio
 import json
 import shutil
 from pathlib import Path
 from playwright.async_api import async_playwright
 
-COOKIES_OUTPUT = Path(__file__).resolve().parent.parent / "runtime" / "xhs" / "data" / "cookies.json"
+COOKIES_OUTPUT = (
+    Path(__file__).resolve().parent.parent / "runtime" / "xhs" / "data" / "cookies.json"
+)
 
 
 def to_go_rod(cookies: list[dict]) -> list[dict]:
     result = []
     for c in cookies:
-        result.append({
-            "name": c["name"],
-            "value": c["value"],
-            "domain": c["domain"],
-            "path": c["path"],
-            "expires": c["expires"] if c["expires"] > 0 else -1,
-            "size": len(c["name"]) + len(c["value"]),
-            "httpOnly": c.get("httpOnly", False),
-            "secure": c.get("secure", False),
-            "session": not (c["expires"] > 0),
-            "priority": "Medium",
-            "sameParty": False,
-            "sourceScheme": "Secure" if c.get("secure") else "NonSecure",
-            "sourcePort": 443 if c.get("secure") else 80,
-        })
+        result.append(
+            {
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c["domain"],
+                "path": c["path"],
+                "expires": c["expires"] if c["expires"] > 0 else -1,
+                "size": len(c["name"]) + len(c["value"]),
+                "httpOnly": c.get("httpOnly", False),
+                "secure": c.get("secure", False),
+                "session": not (c["expires"] > 0),
+                "priority": "Medium",
+                "sameParty": False,
+                "sourceScheme": "Secure" if c.get("secure") else "NonSecure",
+                "sourcePort": 443 if c.get("secure") else 80,
+            }
+        )
     return result
 
 
@@ -61,7 +70,9 @@ async def main():
 
         go_rod_cookies = to_go_rod(cookies)
         COOKIES_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-        COOKIES_OUTPUT.write_text(json.dumps(go_rod_cookies, ensure_ascii=False, indent=2))
+        COOKIES_OUTPUT.write_text(
+            json.dumps(go_rod_cookies, ensure_ascii=False, indent=2)
+        )
         print(f"✅ 导出 {len(go_rod_cookies)} 个 cookies -> {COOKIES_OUTPUT}")
         await browser.close()
 

@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPRECATED: This script targeted the old xpzouying/xiaohongshu-mcp sidecar checks.
+# Use `docker compose up -d xhs-mcp` and `curl http://localhost:18060/health` instead.
 
 set -euo pipefail
 
