@@ -1,0 +1,40 @@
+# docker-compose.cloud.yml
+# 云端部署 overlay —— 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d
+#
+# 与基础 docker-compose.yml 的差异：
+# 1. 新增 Caddy 反向代理（自动 HTTPS）
+# 2. renderer / xhs-mcp 不对外暴露端口
+# 3. MCP 强制开启 API Key 认证
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - OPINION_DOMAIN=${OPINION_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - mcp
+
+  mcp:
+    ports: !override
+      - "18061"
+    environment:
+      - OPINION_REQUIRE_API_KEY=true
+
+  renderer:
+    ports: !override []
+
+  xhs-mcp:
+    ports: !override []
+
+volumes:
+  caddy_data:
+  caddy_config:

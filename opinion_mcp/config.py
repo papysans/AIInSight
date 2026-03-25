@@ -26,6 +26,7 @@ class Config:
     API_KEY_REGISTRY_PATH: str = os.getenv(
         "OPINION_API_KEY_REGISTRY_PATH", "cache/api_keys.json"
     )
+    ADMIN_TOKEN: str = os.getenv("OPINION_ADMIN_TOKEN", "")
 
     # 请求超时配置 (秒)
     REQUEST_TIMEOUT: int = int(os.getenv("OPINION_REQUEST_TIMEOUT", "300"))

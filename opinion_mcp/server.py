@@ -129,6 +129,29 @@ def _validate_or_resolve_account_id(request: Request):
     return account_id
 
 
+def _validate_admin_request(request: Request) -> Optional[HTTPException]:
+    """校验 admin 端点访问权限。
+
+    - ADMIN_TOKEN 非空 → 必须携带正确 token
+    - ADMIN_TOKEN 为空 + REQUIRE_API_KEY → 拒绝（云端必须配 admin token）
+    - ADMIN_TOKEN 为空 + 不 REQUIRE_API_KEY → 放行（本地开发）
+    """
+    if config.ADMIN_TOKEN:
+        token = (
+            request.headers.get("X-Admin-Token")
+            or (request.headers.get("Authorization") or "").replace("Bearer", "").strip()
+        )
+        if token != config.ADMIN_TOKEN:
+            return HTTPException(status_code=403, detail="Invalid admin token")
+        return None
+    if config.REQUIRE_API_KEY:
+        return HTTPException(
+            status_code=403,
+            detail="Admin access requires OPINION_ADMIN_TOKEN to be configured",
+        )
+    return None
+
+
 # ============================================================
 # 初始化 FastAPI 应用
 # ============================================================
@@ -648,19 +671,28 @@ class ApiKeyRevokeRequest(BaseModel):
 
 
 @app.post("/admin/api-keys")
-async def create_api_key(body: ApiKeyCreateRequest) -> Dict[str, Any]:
+async def create_api_key(body: ApiKeyCreateRequest, request: Request) -> Dict[str, Any]:
+    err = _validate_admin_request(request)
+    if err:
+        raise err
     logger.info(f"[ADMIN] Create API key for account={body.account_id}")
     return api_key_registry.create_key(account_id=body.account_id, note=body.note)
 
 
 @app.get("/admin/api-keys")
-async def list_api_keys() -> Dict[str, Any]:
+async def list_api_keys(request: Request) -> Dict[str, Any]:
+    err = _validate_admin_request(request)
+    if err:
+        raise err
     logger.info("[ADMIN] List API keys")
     return {"success": True, "keys": api_key_registry.list_keys()}
 
 
 @app.post("/admin/api-keys/revoke")
-async def revoke_api_key(body: ApiKeyRevokeRequest) -> Dict[str, Any]:
+async def revoke_api_key(body: ApiKeyRevokeRequest, request: Request) -> Dict[str, Any]:
+    err = _validate_admin_request(request)
+    if err:
+        raise err
     logger.info("[ADMIN] Revoke API key")
     revoked = api_key_registry.revoke_key(body.api_key)
     return {

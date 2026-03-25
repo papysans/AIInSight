@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "opinion-mcp": {
+      "type": "url",
+      "url": "http://localhost:18061/mcp"
+    }
+  }
+}

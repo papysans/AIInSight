@@ -28,6 +28,8 @@ services:
       - XHS_MCP_SOURCE_TIMEZONE=${XHS_MCP_SOURCE_TIMEZONE:-UTC}
       - XHS_IMAGE_API_DIR=/app/runtime/xhs/images
       - XHS_IMAGE_MCP_DIR=/app/images
+      - OPINION_REQUIRE_API_KEY=${OPINION_REQUIRE_API_KEY:-false}
+      - OPINION_ADMIN_TOKEN=${OPINION_ADMIN_TOKEN:-}
     volumes:
       - ./cache:/app/cache
       - ./outputs:/app/outputs
