@@ -9,9 +9,15 @@ metadata: { "clawdbot": { "emoji": "🤖", "os": ["darwin", "linux", "win32"] } 
 
 从 AIbase、机器之心、量子位、GitHub Trending、Hugging Face Papers、TechCrunch、Hacker News、Reddit 等数据源自动采集 AI 领域热点新闻，经评分聚合后生成结构化日报，并支持深度分析与卡片生成。
 
-## 🐳 Docker 运行前置检查
+## 远程 Gateway / 本地开发 两种运行模式
 
-如果当前任务涉及小红书发布、二维码登录、`check_xhs_status`、`publish_ai_daily`、`publish_ai_daily_ranking`，默认先假设 AIInSight 运行在 **main 分支四容器栈** 上：
+默认优先假设 AIInSight 运行在 **远程 MCP Gateway** 模式：
+
+- 用户只连接一个远程 MCP 地址
+- 使用 API key 标识独立 account
+- 云端内部承载 `api + renderer + xhs-mcp`
+
+只有在明确是本地开发 / 自托管场景时，才按四容器栈理解运行环境：
 
 - `api` (`8000`)
 - `mcp` (`18061`)
@@ -135,10 +141,18 @@ docker compose logs --tail=60 mcp
 ```
 
 用户确认后：
-1. 调用 `analyze_ai_topic(topic_id, depth)`
-2. 展示分析结果（观点摘要、多角度解读、趋势判断）
-3. 如生成了卡片预览，优先展示卡片访问地址 `image_url`；若没有再展示本地文件路径
-4. 询问是否生成卡片或发布
+1. 优先走 split path：`retrieve_and_report` → 宿主端 debate → `submit_analysis_result`
+2. 如果当前客户端不支持宿主端 debate，再回退到 `analyze_ai_topic(topic_id, depth)`
+3. 展示分析结果（观点摘要、多角度解读、趋势判断）
+4. 如生成了卡片预览，优先展示卡片访问地址 `image_url`；若没有再展示本地文件路径
+5. 询问是否生成卡片或发布
+
+宿主端 debate 规则与 `ai-topic-analyzer` 保持一致：
+
+- Analyst 先基于 `retrieve_and_report` 返回的 `news_content + source_stats` 输出第一版分析
+- Debater 只负责反驳、补盲点和挑战推断
+- Debater 明确回复 `PASS` 或达到 `max_rounds` 时结束
+- 结束后调用 `submit_analysis_result`，把 `final_analysis + debate_history` 提交回云端后半段
 
 ### 3. `/publish <topic_or_id>` — 发布到小红书
 
