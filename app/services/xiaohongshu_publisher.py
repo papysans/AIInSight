@@ -22,18 +22,50 @@ from loguru import logger
 from app.services.account_context import get_account_id
 
 
-def _process_image(image: str) -> str:
-    """
-    处理图片路径/URL/Base64 数据
+def _save_bytes_to_shared_volume(image_data: bytes, ext: str) -> str:
+    """Save image bytes to the shared volume and return xhs-mcp-visible path.
 
-    - 如果是 Base64 data URL，保存到两容器共享卷并返回 xhs-mcp 侧路径
-    - 如果是普通 URL 或本地路径，直接返回
+    Returns the original-style tmp path if shared volume env vars are not set.
     """
+    filename = f"xhs_upload_{id(image_data)}_{int(os.times().elapsed * 1000) % 1000000}.{ext}"
+
+    api_dir = os.getenv("XHS_IMAGE_API_DIR", "").strip()
+    mcp_dir = os.getenv("XHS_IMAGE_MCP_DIR", "").strip()
+
+    if api_dir and mcp_dir:
+        os.makedirs(api_dir, exist_ok=True)
+        api_path = os.path.join(api_dir, filename)
+        mcp_path = os.path.join(mcp_dir, filename)
+        with open(api_path, "wb") as f:
+            f.write(image_data)
+        logger.info(
+            f"[XHS] Saved image to shared vol: {api_path} → mcp sees: {mcp_path}"
+        )
+        return mcp_path
+    else:
+        temp_path = os.path.join(
+            tempfile.gettempdir(), f"xhs_upload_{id(image_data)}.{ext}"
+        )
+        with open(temp_path, "wb") as f:
+            f.write(image_data)
+        logger.warning(
+            f"[XHS] XHS_IMAGE_API_DIR not set, saved to tmp (won't work cross-container): {temp_path}"
+        )
+        return temp_path
+
+
+def _process_image(image: str) -> str:
+    """处理图片路径/URL/Base64 数据，统一转换为 xhs-mcp 可见路径。
+
+    支持三种输入：
+    - Base64 data URL → 解码后写入共享卷
+    - 本地文件路径 → 读取后写入共享卷
+    - HTTP/HTTPS URL → 直接透传（xhs-mcp 原生支持）
+    """
+    # 1. Data URL
     if image.startswith("data:image/"):
         try:
-            # Parse data URL: data:image/png;base64,xxxxx
             header, data = image.split(",", 1)
-            # Extract extension from header
             ext = "png"
             if "image/jpeg" in header or "image/jpg" in header:
                 ext = "jpg"
@@ -44,37 +76,34 @@ def _process_image(image: str) -> str:
             elif "image/webp" in header:
                 ext = "webp"
 
-            # Decode and save to shared volume so xhs-mcp can read it
             image_data = base64.b64decode(data)
-            filename = f"xhs_upload_{id(image_data)}_{int(os.times().elapsed * 1000) % 1000000}.{ext}"
-
-            api_dir = os.getenv("XHS_IMAGE_API_DIR", "").strip()
-            mcp_dir = os.getenv("XHS_IMAGE_MCP_DIR", "").strip()
-
-            if api_dir and mcp_dir:
-                os.makedirs(api_dir, exist_ok=True)
-                api_path = os.path.join(api_dir, filename)
-                mcp_path = os.path.join(mcp_dir, filename)
-                with open(api_path, "wb") as f:
-                    f.write(image_data)
-                logger.info(
-                    f"[XHS] Saved image to shared vol: {api_path} → mcp sees: {mcp_path}"
-                )
-                return mcp_path
-            else:
-                # Fallback: local /tmp (only works outside Docker)
-                temp_path = os.path.join(
-                    tempfile.gettempdir(), f"xhs_upload_{id(image)}.{ext}"
-                )
-                with open(temp_path, "wb") as f:
-                    f.write(image_data)
-                logger.warning(
-                    f"[XHS] XHS_IMAGE_API_DIR not set, saved to tmp (won't work cross-container): {temp_path}"
-                )
-                return temp_path
+            return _save_bytes_to_shared_volume(image_data, ext)
         except Exception as e:
             logger.error(f"[XHS] Failed to process Base64 image: {e}")
-            return image  # Return original on error
+            return image
+
+    # 2. HTTP(S) URL — pass through
+    if image.startswith("http://") or image.startswith("https://"):
+        return image
+
+    # 3. Local file path — read and copy to shared volume
+    if os.path.isfile(image):
+        try:
+            ext = os.path.splitext(image)[1].lstrip(".") or "png"
+            if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
+                ext = "png"
+            with open(image, "rb") as f:
+                image_data = f.read()
+            mcp_path = _save_bytes_to_shared_volume(image_data, ext)
+            logger.info(f"[XHS] Copied local file to shared vol: {image} → {mcp_path}")
+            return mcp_path
+        except Exception as e:
+            logger.warning(f"[XHS] Failed to copy local file {image} to shared vol: {e}")
+            return image
+
+    # 4. Path that doesn't exist or unrecognized format — return as-is
+    if not image.startswith("http") and not image.startswith("data:"):
+        logger.warning(f"[XHS] Local path does not exist, passing through: {image}")
     return image
 
 
@@ -642,7 +671,7 @@ class XiaohongshuPublisher:
                 except Exception as e:
                     logger.warning(f"[XHS MCP] Failed to generate QR image: {e}")
 
-            output_dir = self._get_login_qrcode_dir()
+            output_dir = self._get_login_qrcode_dir(account_id)
             filename = (
                 f"xhs-login-qrcode-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
             )
@@ -815,10 +844,32 @@ class XiaohongshuPublisher:
                     "data": mcp_result,
                 }
 
+            # Best-effort note_url recovery from nested result
+            note_url = None
+            try:
+                parsed_data = json.loads(message) if message.strip().startswith("{") else {}
+                if isinstance(parsed_data, dict):
+                    note_url = parsed_data.get("note_url") or parsed_data.get("url")
+                    if not note_url:
+                        inner = parsed_data.get("result", {})
+                        if isinstance(inner, dict):
+                            note_url = inner.get("note_url") or inner.get("url")
+                    if not note_url:
+                        note_id = parsed_data.get("noteId") or (
+                            parsed_data.get("result", {}).get("noteId")
+                            if isinstance(parsed_data.get("result"), dict)
+                            else None
+                        )
+                        if note_id:
+                            note_url = f"https://www.xiaohongshu.com/explore/{note_id}"
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
             return {
                 "success": True,
                 "message": message or "发布成功",
                 "data": mcp_result,
+                "note_url": note_url,
             }
 
         return {

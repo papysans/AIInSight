@@ -243,6 +243,10 @@ MCP_TOOLS: List[MCPTool] = [
                     "items": {"type": "string"},
                     "description": "话题标签列表（可选）",
                 },
+                "account_id": {
+                    "type": "string",
+                    "description": "账号 ID（可选，用于多账号场景）",
+                },
             },
             required=["title", "content", "images"],
         ),
@@ -250,12 +254,30 @@ MCP_TOOLS: List[MCPTool] = [
     MCPTool(
         name="check_xhs_status",
         description="检查小红书 MCP 服务可用性和登录状态。返回 mcp_available、login_status 和详细信息。发布前请先调用此工具确认登录状态。",
-        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "account_id": {
+                    "type": "string",
+                    "description": "账号 ID（可选，用于多账号场景）",
+                },
+            },
+            required=[],
+        ),
     ),
     MCPTool(
         name="get_xhs_login_qrcode",
         description="获取小红书登录二维码。返回可供客户端展示或打开的二维码信息；扫码后请再次调用 check_xhs_status 确认登录状态。",
-        inputSchema=MCPToolInput(type="object", properties={}, required=[]),
+        inputSchema=MCPToolInput(
+            type="object",
+            properties={
+                "account_id": {
+                    "type": "string",
+                    "description": "账号 ID（可选，用于多账号场景）",
+                },
+            },
+            required=[],
+        ),
     ),
     MCPTool(
         name="check_xhs_login_session",
@@ -266,6 +288,10 @@ MCP_TOOLS: List[MCPTool] = [
                 "session_id": {
                     "type": "string",
                     "description": "登录会话 ID（从 get_xhs_login_qrcode 返回）",
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "账号 ID（可选，用于多账号场景）",
                 },
             },
             required=["session_id"],
@@ -284,6 +310,10 @@ MCP_TOOLS: List[MCPTool] = [
                 "code": {
                     "type": "string",
                     "description": "手机收到的短信验证码",
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "账号 ID（可选，用于多账号场景）",
                 },
             },
             required=["session_id", "code"],

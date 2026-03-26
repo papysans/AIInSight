@@ -121,7 +121,8 @@
   "title": "标题",
   "content": "正文",
   "images": ["path1.png", "path2.png"],
-  "tags": ["#标签1"]
+  "tags": ["#标签1"],
+  "account_id": "账号ID（可选，用于多账号场景）"
 }
 ```
 
@@ -140,7 +141,13 @@
 
 检查 XHS 登录状态。
 
-**Input Schema:** `{}`
+**Input Schema:**
+
+```json
+{
+  "account_id": "账号ID（可选，用于多账号场景）"
+}
+```
 
 **Output Schema:**
 
@@ -157,7 +164,13 @@
 
 获取 XHS 登录二维码。
 
-**Input Schema:** `{}`
+**Input Schema:**
+
+```json
+{
+  "account_id": "账号ID（可选，用于多账号场景）"
+}
+```
 
 **Output Schema:**
 
@@ -180,7 +193,8 @@
 
 ```json
 {
-  "session_id": "..."
+  "session_id": "...",
+  "account_id": "账号ID（可选，用于多账号场景）"
 }
 ```
 
@@ -203,7 +217,8 @@
 ```json
 {
   "session_id": "...",
-  "code": "123456"
+  "code": "123456",
+  "account_id": "账号ID（可选，用于多账号场景）"
 }
 ```
 

@@ -109,13 +109,37 @@ async def publish_xhs_note(
                     failure_result[extra_key] = publish_result.get(extra_key)
             return failure_result
 
-        note_url = None
-        data = publish_result.get("data")
-        if isinstance(data, dict):
-            note_url = data.get("note_url") or data.get("url")
+        # Try note_url from publish_content's normalized result first
+        note_url = publish_result.get("note_url")
+
+        # Fallback: dig into nested data
+        if not note_url:
+            data = publish_result.get("data")
+            if isinstance(data, dict):
+                note_url = data.get("note_url") or data.get("url")
+                # Try noteId → construct URL
+                if not note_url:
+                    content_list = data.get("content", [])
+                    if isinstance(content_list, list) and content_list:
+                        try:
+                            import json as _json
+                            text = content_list[0].get("text", "") if isinstance(content_list[0], dict) else ""
+                            parsed = _json.loads(text) if text.strip().startswith("{") else {}
+                            if isinstance(parsed, dict):
+                                note_id = parsed.get("noteId") or (
+                                    parsed.get("result", {}).get("noteId")
+                                    if isinstance(parsed.get("result"), dict) else None
+                                )
+                                if note_id:
+                                    note_url = f"https://www.xiaohongshu.com/explore/{note_id}"
+                        except (ValueError, TypeError, KeyError):
+                            pass
 
         logger.info(f"[publish_xhs_note] 发布成功: note_url={note_url}")
-        return {"success": True, "note_url": note_url}
+        result_payload: Dict[str, Any] = {"success": True, "note_url": note_url}
+        if not note_url:
+            result_payload["message"] = "已发布成功，但上游未返回 note_url，请在小红书 App 内查看"
+        return result_payload
 
     except Exception as e:
         logger.exception(f"[publish_xhs_note] 发布异常: {e}")
