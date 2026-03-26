@@ -58,6 +58,12 @@ class CardRenderClient:
             output_path = self._build_output_path(card_type, payload)
             output_path.write_bytes(image_bytes)
             result["output_path"] = str(output_path.resolve())
+
+            # 上传到 tmpfile.link
+            from opinion_mcp.services.tmpfile_uploader import upload_to_tmpfile
+            download_link = await upload_to_tmpfile(str(output_path))
+            if download_link:
+                result["download_link"] = download_link
         except Exception as exc:
             logger.warning(
                 f"[CardRenderClient] Failed to persist preview for {card_type}: {exc}"

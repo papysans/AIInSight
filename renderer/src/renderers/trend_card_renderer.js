@@ -164,7 +164,7 @@ export async function renderTrendCard({ stage = '扩散期', growth = 0, curve =
   ctx.textAlign = 'left'
   ctx.fillText('AIINSIGHT / TREND CARD', 108, HEIGHT - 86)
   ctx.textAlign = 'right'
-  ctx.fillText('Preview Card', WIDTH - 108, HEIGHT - 86)
+  ctx.fillText('AIINSIGHT', WIDTH - 108, HEIGHT - 86)
 
   return canvas.toDataURL('image/png')
 }

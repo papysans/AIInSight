@@ -530,7 +530,7 @@ class XiaohongshuPublisher:
         # The upstream MCP may take >10s to finish browser-backed status checks
         # in Docker mode, so use a wider timeout to avoid false negatives.
         result = await self._call_mcp(
-            "check_login_status", timeout=30.0, account=account_id
+            "check_login_status", timeout=60.0, account=account_id
         )
 
         if result.get("success"):

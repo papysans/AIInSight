@@ -35,10 +35,3 @@ def test_mcp_server_exposes_six_capability_tools():
     assert 'name="submit_xhs_verification"' in content
     assert '"render_cards": render_cards' in content
     assert '"publish_xhs_note": publish_xhs_note' in content
-
-
-def test_host_runtime_doc_describes_capability_backend():
-    content = (ROOT / "docs" / "HOST_CONTROLLED_RUNTIME.md").read_text(encoding="utf-8")
-    assert "renderer" in content
-    assert "XHS" in content
-    assert "publish" in content

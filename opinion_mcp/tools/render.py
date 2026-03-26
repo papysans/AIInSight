@@ -26,6 +26,7 @@ async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> D
                 "success": result.get("success", False),
                 "output_path": result.get("output_path"),
                 "image_url": result.get("image_url"),
+                "download_link": result.get("download_link"),
                 "card_type": card_type,
             })
         except Exception as e:

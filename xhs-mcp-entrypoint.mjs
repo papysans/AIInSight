@@ -215,18 +215,8 @@ async function handleLegacyPublishTool(args) {
         };
       }
 
-      // Verification failed — record as unverified, return error
+      // Verification failed — skip db record (can't confirm publish), return error
       console.error('[publish-verify] Verification failed — returning submitted_but_unverified');
-      db.published.record({
-        accountId: ctx.accountId,
-        noteId: null,
-        title: params.title,
-        content: params.content,
-        noteType: 'image',
-        images: params.images,
-        tags: params.tags,
-        status: 'unverified',
-      });
       return {
         success: false,
         error: 'submitted_but_unverified',

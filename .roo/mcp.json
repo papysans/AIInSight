@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aiinsight-mcp": {
+      "type": "streamable-http",
+      "url": "http://localhost:18061/mcp"
+    }
+  }
+}
