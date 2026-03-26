@@ -135,11 +135,18 @@ async def publish_xhs_note(
                         except (ValueError, TypeError, KeyError):
                             pass
 
-        logger.info(f"[publish_xhs_note] 发布成功: note_url={note_url}")
-        result_payload: Dict[str, Any] = {"success": True, "note_url": note_url}
+        # Defense layer: if we still have no note_url, treat as unverified
         if not note_url:
-            result_payload["message"] = "已发布成功，但上游未返回 note_url，请在小红书 App 内查看"
-        return result_payload
+            logger.warning("[publish_xhs_note] 上游返回 success 但 note_url 为空，判定为 submitted_but_unverified")
+            return {
+                "success": False,
+                "error": "submitted_but_unverified",
+                "note_url": None,
+                "message": "发布动作已提交，但未能确认笔记已生成。请在小红书 App 中手动检查。",
+            }
+
+        logger.info(f"[publish_xhs_note] 发布成功: note_url={note_url}")
+        return {"success": True, "note_url": note_url}
 
     except Exception as e:
         logger.exception(f"[publish_xhs_note] 发布异常: {e}")
