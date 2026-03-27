@@ -280,7 +280,7 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
 
 **Step 3：ai-topic-analyzer 完成全流程**
 
-ai-topic-analyzer 完成 Discovery → Evidence → Crucible → Synthesis → Delivery 五阶段流程。
+ai-topic-analyzer 完成 Discovery → Evidence → Deep Search → Smart Synthesis → Delivery 五阶段流程。
 
 > ⚠️ Phase 4 **不重复实现**任何分析逻辑，完全委托给 ai-topic-analyzer SKILL.md 定义的流程。
 

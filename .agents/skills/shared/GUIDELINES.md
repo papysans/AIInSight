@@ -17,7 +17,7 @@
 {
   "specs": [
     {
-      "card_type": "hot-topic | impact | title | daily-rank | radar | timeline",
+      "card_type": "title | verdict | evidence | delta | action | hot-topic | impact | daily-rank | radar | timeline",
       "payload": {}
     }
   ]
@@ -35,15 +35,67 @@
 }
 ```
 
+#### `verdict`
+```json
+{
+  "title": "标题",
+  "verdict": "20-25字核心判断",
+  "why_now": "为什么这件事值得现在讲",
+  "confidence": 0.82,
+  "caveat": "结论边界 / 风险提醒",
+  "stance": "当前立场",
+  "tags": ["#AI"]
+}
+```
+
+#### `evidence`
+```json
+{
+  "title": "标题",
+  "entries": [
+    {
+      "claim": "关键证据",
+      "detail": "这条证据支持了什么判断",
+      "source": "来源名",
+      "strength": "High"
+    }
+  ],
+  "takeaway": "证据整体说明了什么",
+  "tags": ["#AI"]
+}
+```
+
+#### `delta`
+```json
+{
+  "title": "标题",
+  "opening": "初版判断",
+  "challenge": "最大质疑",
+  "revision": "修正结论",
+  "resolution": "为什么最后这样收束",
+  "confidence": 0.82
+}
+```
+
+#### `action`
+```json
+{
+  "title": "标题",
+  "strategy": "一句话执行策略",
+  "actions": ["现在就做什么"],
+  "watchouts": ["重点风险 / 观察点"],
+  "audience": "适用对象",
+  "tags": ["#AI"]
+}
+```
+
 #### `impact`
 ```json
 {
   "title": "标题",
   "summary": "20-25字摘要",
   "insight": "100字洞察",
-  "signals": [
-    { "label": "信号名称", "value": "Strong" }
-  ],
+  "signals": ["信号名称"],
   "actions": ["行动建议"],
   "confidence": 0.95,
   "tags": ["#AI"]
@@ -87,15 +139,18 @@
 ```json
 {
   "timeline": [
-    { "time": "10:00", "event": "事件描述", "impact": "high" }
+    { "round": 1, "title": "关键转折", "summary": "本轮发生了什么修正" }
   ]
 }
 ```
+
+> 说明：`impact` / `timeline` 仍保留兼容，但单话题默认推荐使用 `title + verdict + evidence + delta`，`action` 作为可选扩展卡。
 
 **Output Schema:**
 
 ```json
 {
+  "gallery_url": "http://...",
   "results": [
     {
       "success": true,
@@ -106,7 +161,7 @@
 }
 ```
 
-> ⚠️ **重要**：输出只返回 `output_path` + `image_url`，**不返回 base64**（避免撑爆 LLM 上下文）。
+> ⚠️ **重要**：输出返回 `output_path` / `image_url` / `gallery_url`，**不返回 base64**（避免撑爆 LLM 上下文）。
 
 ---
 

@@ -334,7 +334,7 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
 
 ### 生成 renderer JSON payload（符合 GUIDELINES.md Section 1.1）
 
-默认生成 4 种卡片：
+默认生成 4 种主卡：
 
 ```json
 {
@@ -348,35 +348,53 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
       }
     },
     {
-      "card_type": "impact",
+      "card_type": "verdict",
       "payload": {
         "title": "标题",
-        "summary": "20-25字摘要",
-        "insight": "100字洞察",
-        "signals": [{ "label": "信号名称", "value": "Strong" }],
-        "actions": ["行动建议"],
+        "verdict": "20-25字摘要",
+        "why_now": "为什么现在值得讲",
         "confidence": 0.88,
+        "caveat": "结论边界 / 风险提醒",
+        "stance": "当前立场",
         "tags": ["#AI"]
       }
     },
     {
-      "card_type": "radar",
+      "card_type": "evidence",
       "payload": {
-        "labels": ["技术成熟度", "市场影响", "社区热度", "商业价值"],
-        "datasets": [{ "label": "话题评估", "data": [80, 75, 90, 70] }]
+        "title": "标题",
+        "entries": [
+          {
+            "claim": "关键证据",
+            "detail": "这条证据支持了什么判断",
+            "source": "来源名",
+            "strength": "High"
+          }
+        ],
+        "takeaway": "证据整体说明了什么",
+        "tags": ["#AI"]
       }
     },
     {
-      "card_type": "timeline",
+      "card_type": "delta",
       "payload": {
-        "timeline": [
-          { "time": "日期", "event": "关键事件", "impact": "high" }
-        ]
+        "title": "标题",
+        "opening": "初版判断",
+        "challenge": "最大质疑 / 争议点",
+        "revision": "修正结论",
+        "resolution": "为什么最后这样收束",
+        "confidence": 0.88
       }
     }
   ]
 }
 ```
+
+说明：
+
+- `title + verdict + evidence + delta` 是单话题默认主卡组
+- 若该话题的行动建议特别强，可额外补一张 `action`
+- `impact / radar / timeline` 作为兼容卡保留，不再作为默认主卡
 
 ### 向用户展示预览
 
