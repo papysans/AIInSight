@@ -5,10 +5,18 @@ import { renderTimelineCard } from './src/renderers/timeline_card_renderer.js'
 import { renderTrendCard } from './src/renderers/trend_card_renderer.js'
 import { renderDailyRankCard } from './src/renderers/daily_rank_renderer.js'
 import { renderHotTopicCard } from './src/renderers/hot_topic_renderer.js'
+import { renderVerdictCard } from './src/renderers/verdict_card_renderer.js'
+import { renderEvidenceCard } from './src/renderers/evidence_card_renderer.js'
+import { renderDeltaCard } from './src/renderers/delta_card_renderer.js'
+import { renderActionCard } from './src/renderers/action_card_renderer.js'
 
 const renderers = {
   title: renderTitleCard,
   impact: renderImpactCard,
+  verdict: renderVerdictCard,
+  evidence: renderEvidenceCard,
+  delta: renderDeltaCard,
+  action: renderActionCard,
   radar: renderRadarCard,
   timeline: renderTimelineCard,
   trend: renderTrendCard,

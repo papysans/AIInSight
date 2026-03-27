@@ -15,6 +15,7 @@ AIInSight MCP Server - 精简版 MCP 服务器主入口
 
 import argparse
 import asyncio
+import html
 import inspect
 import json
 import signal
@@ -27,13 +28,17 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from opinion_mcp.config import config
 from opinion_mcp.services.api_key_registry import api_key_registry
 from opinion_mcp.services.account_context import get_account_id, set_account_id
+from opinion_mcp.services.artifact_links import (
+    get_card_preview_output_dir,
+    resolve_card_preview_file_path,
+)
 
 # 导入 6 个工具函数
 from opinion_mcp.tools import (
@@ -192,6 +197,154 @@ async def inject_account_context(request: Request, call_next):
     return await call_next(request)
 
 
+@app.get("/card-previews/gallery", response_class=HTMLResponse)
+async def get_card_preview_gallery(request: Request, file: Optional[List[str]] = None):
+    """返回卡片预览画廊页，便于宿主浏览器直接查看最近一次渲染结果。"""
+    candidates = file or []
+    resolved_files = []
+    for name in candidates:
+        file_path = resolve_card_preview_file_path(name, account_id=get_account_id())
+        if file_path:
+            resolved_files.append(file_path)
+
+    if not resolved_files:
+        preview_dir = get_card_preview_output_dir(account_id=get_account_id())
+        resolved_files = sorted(
+            preview_dir.glob("*.png"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:8]
+
+    cards = []
+    for file_path in resolved_files:
+        image_url = str(
+            request.url_for("get_card_preview_file", filename=file_path.name)
+        )
+        cards.append(
+            f"""
+            <article class="card">
+              <a href="{html.escape(image_url)}" target="_blank" rel="noreferrer">
+                <img src="{html.escape(image_url)}" alt="{html.escape(file_path.name)}" loading="lazy" />
+              </a>
+              <div class="meta">
+                <strong>{html.escape(file_path.name)}</strong>
+                <a href="{html.escape(image_url)}" target="_blank" rel="noreferrer">打开原图</a>
+              </div>
+            </article>
+            """
+        )
+
+    empty_state = (
+        "<section class='empty'><h1>还没有可预览的卡片</h1>"
+        "<p>先调用 render_cards 生成图片，再打开这个地址。</p></section>"
+    )
+    body = "\n".join(cards) if cards else empty_state
+
+    return HTMLResponse(
+        f"""<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AIInSight Card Preview</title>
+    <style>
+      :root {{
+        color-scheme: light;
+        --bg: #f6efe5;
+        --panel: rgba(255, 252, 248, 0.86);
+        --ink: #4d2f1b;
+        --line: rgba(77, 47, 27, 0.12);
+        --accent: #d56a1c;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        font-family: "PingFang SC", "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(255, 197, 134, 0.45), transparent 24rem),
+          linear-gradient(180deg, #fbf4e3 0%, var(--bg) 100%);
+        color: var(--ink);
+      }}
+      main {{
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 24px 56px;
+      }}
+      h1 {{
+        margin: 0 0 8px;
+        font-size: 32px;
+      }}
+      p {{
+        margin: 0 0 28px;
+        color: rgba(77, 47, 27, 0.72);
+      }}
+      .grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 20px;
+      }}
+      .card {{
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        overflow: hidden;
+        background: var(--panel);
+        box-shadow: 0 18px 42px rgba(110, 68, 28, 0.08);
+        backdrop-filter: blur(8px);
+      }}
+      .card img {{
+        display: block;
+        width: 100%;
+        height: auto;
+        aspect-ratio: 3 / 4;
+        object-fit: cover;
+        background: rgba(255, 255, 255, 0.6);
+      }}
+      .meta {{
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        padding: 14px 16px 18px;
+        font-size: 14px;
+      }}
+      .meta strong {{
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }}
+      a {{
+        color: var(--accent);
+        text-decoration: none;
+      }}
+      .empty {{
+        padding: 80px 24px;
+        text-align: center;
+        border: 1px dashed var(--line);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.45);
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>AIInSight Card Preview</h1>
+      <p>当前账号：{html.escape(get_account_id())}</p>
+      <section class="grid">{body}</section>
+    </main>
+  </body>
+</html>"""
+    )
+
+
+@app.get("/card-previews/{filename}", name="get_card_preview_file")
+async def get_card_preview_file(filename: str):
+    """返回当前账号的卡片预览图片文件。"""
+    file_path = resolve_card_preview_file_path(filename, account_id=get_account_id())
+    if not file_path:
+        raise HTTPException(status_code=404, detail="卡片预览文件不存在")
+    return FileResponse(file_path, media_type="image/png", filename=file_path.name)
+
+
 # ============================================================
 # 6 个 MCP 工具定义
 # ============================================================
@@ -199,7 +352,7 @@ async def inject_account_context(request: Request, call_next):
 MCP_TOOLS: List[MCPTool] = [
     MCPTool(
         name="render_cards",
-        description="渲染可视化卡片。支持 title/impact/radar/timeline/daily-rank/hot-topic 等卡片类型。返回 output_path 和 image_url（不返回 base64）。",
+        description="渲染可视化卡片。支持 title/verdict/evidence/delta/action，以及兼容的 impact/radar/timeline/daily-rank/hot-topic 等卡片类型。返回 output_path、image_url，以及便于浏览器打开的 gallery_url（不返回 base64）。",
         inputSchema=MCPToolInput(
             type="object",
             properties={
@@ -211,7 +364,7 @@ MCP_TOOLS: List[MCPTool] = [
                         "properties": {
                             "card_type": {
                                 "type": "string",
-                                "description": "卡片类型: title/impact/radar/timeline/daily-rank/hot-topic",
+                                "description": "卡片类型: title/verdict/evidence/delta/action/impact/radar/timeline/daily-rank/hot-topic",
                             },
                             "payload": {
                                 "type": "object",

@@ -6,6 +6,10 @@
 
 export { renderTitleCard, themeColorMap } from './title_card_renderer.js'
 export { renderImpactCard } from './impact_card_renderer.js'
+export { renderVerdictCard } from './verdict_card_renderer.js'
+export { renderEvidenceCard } from './evidence_card_renderer.js'
+export { renderDeltaCard } from './delta_card_renderer.js'
+export { renderActionCard } from './action_card_renderer.js'
 export { renderRadarCard } from './radar_card_renderer.js'
 export { renderTimelineCard } from './timeline_card_renderer.js'
 export { renderTrendCard } from './trend_card_renderer.js'

@@ -10,15 +10,32 @@ import {
   drawEditorialScaffold,
   drawRoundedRect,
   fitTextWithEllipsis,
+  normalizeTextItem,
   wrapMixedText,
 } from './editorial_helpers.js'
 
 function extractKeyPoint(item) {
   if (item.summary) return item.summary
+  if (item.event) return item.event
   const text = item.insight || ''
   const firstSentence = text.match(/^[^。！？.!?]+[。！？.!?]/)
   if (firstSentence) return firstSentence[0]
   return text.substring(0, 48)
+}
+
+function getRoundLabel(item, index) {
+  if (item.round) return `R${item.round}`
+  if (item.time) return item.time
+  return `R${index + 1}`
+}
+
+function getEntryTitle(item, index) {
+  return (
+    item.title
+    || normalizeTextItem(item)
+    || item.event
+    || `第 ${index + 1} 轮`
+  )
 }
 
 function computeRowLayout(count) {
@@ -93,13 +110,13 @@ export async function renderTimelineCard({ timeline: rawTimeline = [] }) {
     ctx.font = 'bold 26px "SF Pro Display", "PingFang SC", "Noto Sans CJK SC", sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.fillText(`R${item.round || index + 1}`, 154, y + rowHeight / 2)
+    ctx.fillText(getRoundLabel(item, index), 154, y + rowHeight / 2)
 
     ctx.textAlign = 'left'
     ctx.textBaseline = 'alphabetic'
     ctx.fillStyle = colors.ink
     ctx.font = `bold ${rowHeight >= 150 ? 32 : 28}px "SF Pro Display", "PingFang SC", "Noto Sans CJK SC", sans-serif`
-    const titleText = fitTextWithEllipsis(ctx, item.title || `第 ${index + 1} 轮`, 600)
+    const titleText = fitTextWithEllipsis(ctx, getEntryTitle(item, index), 600)
     ctx.fillText(titleText, 246, y + 40)
 
     const keyPoint = extractKeyPoint(item)

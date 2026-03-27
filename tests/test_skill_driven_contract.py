@@ -215,7 +215,10 @@ class TestMCPToolContract:
 class TestRenderCardsPayload:
     """Validate render_cards payload schemas per GUIDELINES.md Section 1.1"""
 
-    VALID_CARD_TYPES = {"title", "impact", "hot-topic", "daily-rank", "radar", "timeline"}
+    VALID_CARD_TYPES = {
+        "title", "verdict", "evidence", "delta", "action",
+        "impact", "hot-topic", "daily-rank", "radar", "timeline"
+    }
 
     def test_all_card_types_documented(self):
         """All valid card types should be recognized"""
@@ -228,6 +231,34 @@ class TestRenderCardsPayload:
         assert "title" in payload
         assert "emoji" in payload
         assert "theme" in payload
+
+    def test_verdict_card_required_fields(self):
+        payload = self._minimal_payload("verdict")
+        for field in ("title", "verdict", "why_now", "confidence", "caveat", "stance", "tags"):
+            assert field in payload, f"verdict card missing field: {field}"
+        assert 0 <= payload["confidence"] <= 1
+
+    def test_evidence_card_required_fields(self):
+        payload = self._minimal_payload("evidence")
+        for field in ("title", "entries", "takeaway", "tags"):
+            assert field in payload, f"evidence card missing field: {field}"
+        assert isinstance(payload["entries"], list)
+        entry = payload["entries"][0]
+        for field in ("claim", "detail", "source", "strength"):
+            assert field in entry, f"evidence entry missing field: {field}"
+
+    def test_delta_card_required_fields(self):
+        payload = self._minimal_payload("delta")
+        for field in ("title", "opening", "challenge", "revision", "resolution", "confidence"):
+            assert field in payload, f"delta card missing field: {field}"
+        assert 0 <= payload["confidence"] <= 1
+
+    def test_action_card_required_fields(self):
+        payload = self._minimal_payload("action")
+        for field in ("title", "strategy", "actions", "watchouts", "audience", "tags"):
+            assert field in payload, f"action card missing field: {field}"
+        assert isinstance(payload["actions"], list)
+        assert isinstance(payload["watchouts"], list)
 
     def test_impact_card_required_fields(self):
         payload = self._minimal_payload("impact")
@@ -267,16 +298,52 @@ class TestRenderCardsPayload:
         assert "timeline" in payload
         assert isinstance(payload["timeline"], list)
         entry = payload["timeline"][0]
-        for field in ("time", "event", "impact"):
+        for field in ("round", "title", "summary"):
             assert field in entry, f"timeline entry missing field: {field}"
 
     @staticmethod
     def _minimal_payload(card_type: str) -> dict:
         payloads = {
             "title": {"title": "测试标题", "emoji": "🔍", "theme": "warm"},
+            "verdict": {
+                "title": "标题",
+                "verdict": "一句话判断",
+                "why_now": "为什么现在值得讲",
+                "confidence": 0.82,
+                "caveat": "结论边界",
+                "stance": "谨慎看多",
+                "tags": ["#AI"],
+            },
+            "evidence": {
+                "title": "标题",
+                "entries": [{
+                    "claim": "关键证据",
+                    "detail": "支持了这条判断",
+                    "source": "来源名",
+                    "strength": "High",
+                }],
+                "takeaway": "证据整体说明什么",
+                "tags": ["#AI"],
+            },
+            "delta": {
+                "title": "标题",
+                "opening": "初版判断",
+                "challenge": "主要质疑",
+                "revision": "修正结论",
+                "resolution": "为何这样收束",
+                "confidence": 0.78,
+            },
+            "action": {
+                "title": "标题",
+                "strategy": "一句话执行策略",
+                "actions": ["先做一件事"],
+                "watchouts": ["重点风险"],
+                "audience": "个人用户",
+                "tags": ["#AI"],
+            },
             "impact": {
                 "title": "标题", "summary": "摘要", "insight": "洞察",
-                "signals": [{"label": "信号", "value": "Strong"}],
+                "signals": ["信号"],
                 "actions": ["建议"], "confidence": 0.9, "tags": ["#AI"]
             },
             "hot-topic": {
@@ -293,7 +360,7 @@ class TestRenderCardsPayload:
                 "datasets": [{"label": "数据集", "data": [80, 60]}]
             },
             "timeline": {
-                "timeline": [{"time": "10:00", "event": "事件", "impact": "high"}]
+                "timeline": [{"round": 1, "title": "第一轮", "summary": "关键转折"}]
             },
         }
         return payloads.get(card_type)

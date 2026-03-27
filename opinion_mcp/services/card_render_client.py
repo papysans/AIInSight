@@ -15,11 +15,18 @@ import os
 import httpx
 from loguru import logger
 from opinion_mcp.services.account_context import get_account_id
+from opinion_mcp.services.artifact_links import build_card_preview_url
 
 # Inline config (previously from app.config.settings)
 _RENDERER_SERVICE_URL = os.getenv("RENDERER_SERVICE_URL", "http://renderer:3001")
 _RENDERER_TIMEOUT = int(os.getenv("RENDERER_TIMEOUT", "30"))
 _PREVIEW_OUTPUT_DIR = os.getenv("CARD_PREVIEW_OUTPUT_DIR", "outputs/card_previews")
+_UPLOAD_TMPFILE = os.getenv("CARD_PREVIEW_UPLOAD_TO_TMPFILE", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 class CardRenderClient:
@@ -41,7 +48,7 @@ class CardRenderClient:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return output_dir / f"{timestamp}_{card_key}_{digest}.png"
 
-    def _persist_preview(self, card_type: str, payload: dict, result: dict) -> dict:
+    async def _persist_preview(self, card_type: str, payload: dict, result: dict) -> dict:
         if not result.get("success") or not result.get("image_data_url"):
             return result
 
@@ -58,12 +65,14 @@ class CardRenderClient:
             output_path = self._build_output_path(card_type, payload)
             output_path.write_bytes(image_bytes)
             result["output_path"] = str(output_path.resolve())
+            result["image_url"] = build_card_preview_url(output_path.name)
 
-            # 上传到 tmpfile.link
-            from opinion_mcp.services.tmpfile_uploader import upload_to_tmpfile
-            download_link = await upload_to_tmpfile(str(output_path))
-            if download_link:
-                result["download_link"] = download_link
+            if _UPLOAD_TMPFILE:
+                from opinion_mcp.services.tmpfile_uploader import upload_to_tmpfile
+
+                download_link = await upload_to_tmpfile(str(output_path))
+                if download_link:
+                    result["download_link"] = download_link
         except Exception as exc:
             logger.warning(
                 f"[CardRenderClient] Failed to persist preview for {card_type}: {exc}"
@@ -88,7 +97,7 @@ class CardRenderClient:
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                return self._persist_preview(card_type, payload, data)
+                return await self._persist_preview(card_type, payload, data)
         except httpx.ConnectError:
             logger.warning(
                 f"[CardRenderClient] Renderer service unreachable at {self.base_url}"

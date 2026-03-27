@@ -1,6 +1,8 @@
 """MCP 渲染工具 - 调用 card_render_client 渲染卡片"""
+from pathlib import Path
 from typing import Any, Dict, List
 from loguru import logger
+from opinion_mcp.services.artifact_links import build_card_preview_gallery_url
 
 
 async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> Dict[str, Any]:
@@ -10,11 +12,15 @@ async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> D
         specs: 卡片规格列表，每项包含 card_type 和 payload
 
     Returns:
-        { "results": [{ "success": bool, "output_path": str, "image_url": str }] }
+        {
+          "results": [{ "success": bool, "output_path": str, "image_url": str }],
+          "gallery_url": "http://..."
+        }
     """
     from opinion_mcp.services.card_render_client import card_render_client
 
     results = []
+    gallery_files = []
     for spec in specs:
         card_type = spec.get("card_type", "").replace("-", "_")
         payload = spec.get("payload", {})
@@ -29,6 +35,8 @@ async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> D
                 "download_link": result.get("download_link"),
                 "card_type": card_type,
             })
+            if result.get("success") and result.get("output_path"):
+                gallery_files.append(Path(result["output_path"]).name)
         except Exception as e:
             logger.error(f"[render_cards] {card_type} 渲染失败: {e}")
             results.append({
@@ -39,4 +47,7 @@ async def render_cards(specs: List[Dict[str, Any]], account_id: str = None) -> D
                 "error": str(e),
             })
 
-    return {"results": results}
+    return {
+        "results": results,
+        "gallery_url": build_card_preview_gallery_url(gallery_files),
+    }

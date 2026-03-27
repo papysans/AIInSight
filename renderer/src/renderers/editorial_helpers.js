@@ -96,16 +96,26 @@ export function wrapMixedText(ctx, text, maxWidth, maxLines = 4) {
 
   if (lines.length > maxLines) lines.length = maxLines
 
-  const consumed = lines.join(' ')
+  for (let i = 1; i < lines.length; i += 1) {
+    const punctuation = lines[i].match(/^[，。！？；：、,.!?）】》」』]+/)
+    if (punctuation) {
+      lines[i - 1] += punctuation[0]
+      lines[i] = lines[i].slice(punctuation[0].length).trimStart()
+    }
+  }
+
+  const compactLines = lines.filter(Boolean)
+
+  const consumed = compactLines.join(' ')
   if (consumed.length < (text || '').trim().length && lines.length > 0) {
-    let clipped = lines[lines.length - 1].replace(/[ ,.;:!?\-_/]*$/, '')
+    let clipped = compactLines[compactLines.length - 1].replace(/[ ,.;:!?\-_/]*$/, '')
     while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > maxWidth) {
       clipped = clipped.slice(0, -1)
     }
-    lines[lines.length - 1] = `${clipped}…`
+    compactLines[compactLines.length - 1] = `${clipped}…`
   }
 
-  return lines.length > 0 ? lines : ['']
+  return compactLines.length > 0 ? compactLines : ['']
 }
 
 export function fitTextWithEllipsis(ctx, text, maxWidth) {
@@ -118,6 +128,67 @@ export function fitTextWithEllipsis(ctx, text, maxWidth) {
     output = output.slice(0, -1)
   }
   return `${output}…`
+}
+
+function normalizeObjectText(item) {
+  if (!item || typeof item !== 'object') return ''
+
+  const primary = [
+    item.label,
+    item.title,
+    item.claim,
+    item.summary,
+    item.event,
+    item.headline,
+    item.name,
+  ].find((value) => typeof value === 'string' && value.trim())
+
+  const secondary = [
+    item.desc,
+    item.detail,
+    item.reason,
+    item.source,
+    item.value,
+    item.time,
+    item.note,
+  ].find((value) => typeof value === 'string' && value.trim())
+
+  if (primary && secondary && secondary !== primary) {
+    return `${primary} · ${secondary}`
+  }
+  return primary || secondary || ''
+}
+
+export function normalizeTextItem(item) {
+  if (typeof item === 'string') return item.trim()
+  if (typeof item === 'number') return String(item)
+  return normalizeObjectText(item)
+}
+
+export function normalizeTextList(items, max = 5) {
+  return (items || [])
+    .map(normalizeTextItem)
+    .filter(Boolean)
+    .slice(0, max)
+}
+
+export function formatConfidenceValue(confidence) {
+  if (confidence === null || confidence === undefined || confidence === '') return ''
+
+  if (typeof confidence === 'number') {
+    const normalized = confidence <= 1 ? confidence * 100 : confidence
+    return `${Math.round(normalized)}%`
+  }
+
+  const value = String(confidence).trim()
+  if (!value) return ''
+
+  const asNumber = Number(value)
+  if (!Number.isNaN(asNumber)) {
+    const normalized = asNumber <= 1 ? asNumber * 100 : asNumber
+    return `${Math.round(normalized)}%`
+  }
+  return value
 }
 
 export function splitSummaryIntoBullets(summary, maxBullets = 3) {

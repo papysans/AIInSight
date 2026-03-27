@@ -57,7 +57,7 @@ app.get('/healthz', (_req, res) => {
 })
 
 // Card type mapping
-const VALID_TYPES = ['title', 'impact', 'radar', 'timeline', 'trend', 'daily_rank', 'hot_topic']
+const VALID_TYPES = ['title', 'impact', 'verdict', 'evidence', 'delta', 'action', 'radar', 'timeline', 'trend', 'daily_rank', 'hot_topic']
 
 const TYPE_ALIASES = {
   'daily-rank': 'daily_rank',

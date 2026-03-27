@@ -9,14 +9,16 @@ import {
   drawEditorialHeader,
   drawEditorialScaffold,
   drawRoundedRect,
+  formatConfidenceValue,
   fitTextWithEllipsis,
   normalizeTags,
+  normalizeTextList,
   wrapMixedText,
 } from './editorial_helpers.js'
 
 function drawBulletList(ctx, items, x, y, width, lineHeight, colors) {
   let currentY = y
-  items.forEach((item) => {
+  normalizeTextList(items, 3).forEach((item) => {
     ctx.fillStyle = colors.accent
     ctx.beginPath()
     ctx.arc(x, currentY - 8, 7, 0, Math.PI * 2)
@@ -65,7 +67,9 @@ export async function renderImpactCard({
     width: WIDTH,
     section: 'WHAT TO DO NEXT',
     title: '影响判断与跟进',
-    subtitle: confidence ? `当前结论成熟度：${confidence}` : '聚焦为什么重要、下一步怎么跟',
+    subtitle: formatConfidenceValue(confidence)
+      ? `当前结论成熟度：${formatConfidenceValue(confidence)}`
+      : '聚焦为什么重要、下一步怎么跟',
     colors,
     motifScale: 0.72,
     titleWidth: 560,
