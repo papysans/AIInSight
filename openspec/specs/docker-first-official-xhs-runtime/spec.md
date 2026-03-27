@@ -1,22 +1,43 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Docker sidecar SHALL be the supported XHS runtime topology
-The system SHALL define a Docker-based `xhs-mcp` sidecar runtime as the supported Xiaohongshu integration topology for this migration and SHALL route AIInSight XHS traffic to that sidecar over the Docker network.
+### Requirement: XHS MCP Docker 镜像
 
-#### Scenario: XHS integration is configured for supported deployment
-- **WHEN** the supported XHS deployment is brought up
-- **THEN** AIInSight services MUST connect to an `xhs-mcp` sidecar endpoint within the Docker topology rather than requiring a host-side MCP process
+Docker sidecar 从 `xpzouying/xiaohongshu-mcp` (Go + Chrome) 切换为基于 `@sillyl12324/xhs-mcp` (Node.js + Playwright + Chromium) 的自建镜像。
 
-### Requirement: Docker-first XHS verification SHALL cover sidecar availability and login state
-The system SHALL verify that the Docker-based `xhs-mcp` sidecar is reachable and authenticated before XHS publishing is considered ready.
+镜像 SHALL 包含：
+- Node.js 20 LTS
+- Playwright Chromium 浏览器
+- `@sillyl12324/xhs-mcp` npm 包
 
-#### Scenario: Operator validates Docker XHS readiness
-- **WHEN** the operator triggers XHS readiness validation
-- **THEN** the system MUST report whether the sidecar is reachable, whether login is complete, and whether operator scanning is still required
+#### Scenario: 构建 Docker 镜像
 
-### Requirement: Supported public XHS guidance SHALL exclude host-side runtime as a primary path
-Public-facing docs and operator guidance for the migrated XHS flow SHALL describe Docker-first deployment as the supported path and SHALL NOT present host-side `xhs-mcp` as a parallel supported chain.
+- **WHEN** 执行 `docker build -f Dockerfile.xhs-mcp .`
+- **THEN** 生成包含 Node.js + Playwright + Chromium 的镜像，能以 HTTP 模式在 18060 端口提供 MCP 服务
 
-#### Scenario: User reads XHS deployment guidance
-- **WHEN** a public-facing XHS setup or troubleshooting guide describes the supported deployment path
-- **THEN** it MUST present the Docker sidecar topology as the primary supported chain and MUST NOT describe host-side `xhs-mcp` as a supported alternative for this migration
+#### Scenario: Apple Silicon 兼容
+
+- **WHEN** 在 Apple Silicon (arm64) 机器上构建和运行
+- **THEN** 镜像使用 `linux/arm64` 平台，Playwright Chromium 正常安装和运行
+
+### Requirement: Docker Compose 配置
+
+`docker-compose.yml` 和 `docker-compose.xhs.yml` 中的 xhs-mcp 服务 SHALL 更新为新镜像配置。
+
+环境变量映射：
+- `XHS_MCP_HEADLESS=true`
+- `XHS_MCP_DATA_DIR=/data`
+- `XHS_MCP_REQUEST_INTERVAL=2000`
+
+Volume 挂载：
+- `./runtime/xhs/data:/data`（SQLite 数据库 + 会话持久化）
+- `./runtime/xhs/images:/app/images`（发布图片）
+
+#### Scenario: Docker Compose 启动
+
+- **WHEN** 执行 `docker compose up -d xhs-mcp`
+- **THEN** 容器正常启动，`http://xhs-mcp:18060/mcp` 可访问，headless 模式运行
+
+#### Scenario: Volume 持久化
+
+- **WHEN** xhs-mcp 容器被销毁并重建
+- **THEN** SQLite 数据库通过 volume 挂载保留，已登录的会话不丢失

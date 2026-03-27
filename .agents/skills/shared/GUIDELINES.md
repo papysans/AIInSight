@@ -258,11 +258,6 @@
     "content": "小红书正文（800-1200字）",
     "tags": ["标签1", "标签2"]
   },
-  "debate_log": [
-    "Round 1: Analyst: ...",
-    "Debater: ...",
-    "Round 2: ..."
-  ],
   "sources": ["https://source1.com", "https://source2.com"]
 }
 ```
@@ -395,6 +390,29 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
 "AI" site:techcrunch.com latest
 ```
 
+### 4.4 Deep Search（垂直数据源深度检索）
+
+话题分析的 Phase 2.5 阶段，针对热点从垂直数据源执行定向 `site:` 搜索：
+
+| 类型 | 数据源 | 搜索语法 |
+|------|--------|---------|
+| **中文 AI 媒体** | AIBase | `"{topic}" site:aibase.com` |
+| | 机器之心 | `"{topic}" site:jiqizhixin.com` |
+| | 量子位 | `"{topic}" site:qbitai.com` |
+| **英文技术源** | TechCrunch | `"{topic}" site:techcrunch.com` |
+| | arXiv | `"{topic}" site:arxiv.org abstract {current_year}` |
+| | GitHub | `"{topic}" site:github.com trending` |
+
+**模式搜索量：**
+
+| 模式 | Deep Search 搜索量 | 策略 |
+|------|-------------------|------|
+| quick | 0（跳过） | — |
+| standard | 3-5 次 | 中文源优先 |
+| deep | 6-9 次 | 覆盖所有数据源 |
+
+**去重规则：** 按 URL 去重 → 按事件合并（保留所有 URL）→ 按时间排序插入。
+
 ---
 
 ## 5. 多宿主兼容说明
@@ -416,22 +434,24 @@ Skill 启动时检查 `requires` 中的工具可用性；若不满足，提前 f
 
 ---
 
-## 6. Debate 终止条件
+## 6. 置信度评估规则
 
-Debate 循环在以下任一条件满足时终止：
+Smart Synthesis 阶段基于证据质量自动计算置信度评分：
 
-1. **Debater 回复 `"PASS"`** → 分析通过，立即终止
-2. **达到 `max_rounds`**（默认 3 轮）→ 强制终止，取最新版本的分析结果
-3. **单轮无新质疑点**（Debater 重复上一轮的质疑）→ 终止，视为隐式 PASS
+| 条件 | 置信度 |
+|------|--------|
+| ≥5 条 High 可信度 + 覆盖 3 个维度（Technical/Market/Sentiment） | 0.8-1.0 |
+| 3-4 条 High 可信度 + 覆盖 2 个维度 | 0.65-0.79 |
+| 3-4 条 High 可信度 + 覆盖 1 个维度 | 0.5-0.64 |
+| <3 条 High 可信度 或 主要为 Low/Medium | <0.5 |
 
-终止后，`debate_log` 字段应记录完整的对话历史，格式：
+**可信度分级：**
 
-```
-Round 1: Analyst: <分析摘要>
-Round 1: Debater: <质疑内容>
-Round 2: Analyst: <修正版分析>
-Round 2: Debater: PASS
-```
+| 等级 | 来源类型 |
+|------|---------|
+| **High** | 主流科技媒体、官方博客、论文（TechCrunch、机器之心、arxiv.org 等） |
+| **Medium** | 社区讨论、行业分析（HN、Reddit、知乎） |
+| **Low** | 个人博客、未经证实的报道 |
 
 ---
 
