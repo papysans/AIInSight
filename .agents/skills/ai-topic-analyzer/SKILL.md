@@ -1,306 +1,542 @@
 ---
 name: ai-topic-analyzer
-description: AI 话题分析助手。适用于“帮我看看 xxx 这个 AI 话题”“深挖这个模型/公司/论文/项目”“做成卡片/发布到小红书”等请求。默认先确认分析模式，再走 AI 证据检索 + 多 Agent 分析。
+description: AI 话题深度分析。适用于"帮我看看 xxx""分析这个话题""做成卡片/发布到小红书"等请求。5 阶段引擎：Discovery → Evidence → Deep Search → Smart Synthesis → Delivery。
+requires:
+  - web_search
+  - mcp_gateway
 ---
 
-# AI Topic Analyzer
+# AI Topic Analyzer — 5-Phase Thick Skill
 
-用于单个 AI 话题的证据检索、辩论式分析、卡片生成与发布。
+> **核心理念**：所有 AI 推理在宿主端 Skill 完成，云端 MCP Server 退化为 renderer + XHS 纯能力服务。
+> Skill 指导 LLM（宿主端）完成全部分析推理，仅在需要渲染卡片和发布时才调用 MCP 工具。
 
-## 远程 Gateway / 本地开发 两种运行模式
+### 约定
 
-默认优先按 **远程 MCP Gateway** 理解运行环境；只有在本地开发或自托管场景下，才回落到四容器栈。
+- `{current_year}` — 搜索 query 中出现时，替换为运行时的实际年份（如 2026）。**禁止硬编码具体年份。**
 
-### 1. 远程 Gateway（优先）
+---
 
-- 用户只连接一个 MCP 地址
-- 使用 API key 标识 account
-- 单话题分析默认走 `analyze_topic`（后台全流程）
-- 高级客户端可选 split path：`retrieve_and_report` → 宿主端 debate → `submit_analysis_result`
+## 启动检查
 
-### 2. 本地开发 / 自托管
+Skill 启动时验证依赖：
 
-如果当前任务明确处于本地开发/自托管环境，再按四容器栈理解：
+- `web_search`：可用 → 继续；不可用 → fail-fast，提示用户配置 web search 工具
+- `mcp_gateway`（含 `render_cards` + `publish_xhs_note`）：可选，仅 Phase 5 需要；若不可用则跳过 Delivery
 
-- `api` → `8000`
-- `mcp` → `18061`
-- `renderer` → `3001`
-- `xhs-mcp` → `18060`
+---
 
-优先使用下面这组命令恢复运行环境：
+## 分析模式
 
-```bash
-docker compose up -d --build api mcp renderer xhs-mcp
-docker compose ps
-docker compose logs --tail=60 mcp
-```
+| 模式 | Deep Search 搜索量 | Discovery 搜索量 | 适用场景 |
+|------|-------------------|----------------|---------|
+| **quick** | 0（跳过 Deep Search，Evidence → Smart Synthesis） | 3 次 | 快速概览 |
+| **standard**（默认） | 3-5 次（中文源优先） | 6 次 | 标准深挖 |
+| **deep** | 6-9 次（覆盖所有数据源） | 9 次 | 深度研究 |
 
-如果 `api` 起不来并提示 `8000` 端口被占，优先怀疑旧 worktree 项目容器还没停干净；如果 `mcp` 容器起不来，先看 `mcp` 日志，不要只盯 `xhs-mcp`。
+---
 
-## 关键规则
+## 确认提示（Phase 0）
 
-- 不要在用户只给出话题时立刻调用 `analyze_topic`
-- 如果客户端支持宿主端多轮思考且用户要求更细粒度控制，可选 split path：`retrieve_and_report` + 宿主端 debate + `submit_analysis_result`
-- 先确认分析模式：`quick` / `standard` / `deep` / `自定义来源`
-- 不再询问旧的社媒平台；如果用户要自定义，询问的是 AI 来源组或具体来源
-- 默认参数是 `depth="standard"`、默认来源组、`image_count=0`
-- 如果用户明确要求“3轮/4轮辩论”，才额外传 `debate_rounds`
-- 如果用户明确要求“带图/2张图/配图”，才传 `image_count`
-- `analyze_topic` 启动成功后，必须持续调用 `get_analysis_status` 直到任务完成或失败
-- 任务完成后，必须调用 `get_analysis_result` 展示结果预览
-- 生成卡片是显式后处理步骤，需要调用 `generate_topic_cards`
-- 只有用户明确确认后，才能调用 `publish_to_xhs`
-- 如果发布失败或返回 `already_published=true`，不要重新调用 `analyze_topic`
-- 如果发布前发现小红书未登录，或发布结果返回 `login_required=true`，先调用 `check_xhs_status`，然后按下方「小红书登录」章节引导用户获取二维码并保留 `session_id`
-- 用户扫码后，优先调用 `check_xhs_login_session(session_id)`；若要求短信验证码，再调用 `submit_xhs_verification(session_id, code)`
-- 用户扫码完成前不要自动重试发布；等待用户确认后再继续
-- 真实发布会对外创建笔记，仍然需要用户明确确认，不要把“登录成功”当成“自动可以发布”
-- 如果 `mcp` 容器日志出现 `ImportError: cannot import name 'reset_xhs_login' from 'opinion_mcp.tools'`，说明当前镜像没有带上最新导出修复，需要重新 `docker compose up -d --build api mcp renderer xhs-mcp`
+**如果调用方（如 ai-insight）已传入分析模式，直接跳过 Phase 0，按传入的模式进入 Phase 1。**
 
-## 默认流程
-
-### 1. 启动分析
-
-当用户说“帮我看看 xxx 这个话题”时，先给一个简短确认：
+仅当用户直接说"帮我看看 xxx""分析这个话题"、且未指定模式时，才给一个简短确认：
 
 ```text
-准备分析「xxx」。
+准备分析「{topic}」。
 
 可选模式：
 - quick：快速看重点
 - standard：标准深挖（推荐）
 - deep：更深一层
-- 自定义来源：media / research / code / community
 
-直接回复“默认”，我就按 standard 开始。
-如果你想顺便出图，也可以补一句“带 2 张图”。
+直接回复"默认"，我就按 standard 开始。
+如果你想顺便出图，也可以补一句"带图"。
 ```
 
-如果用户回复”默认”，使用 `analyze_topic` 启动后台全流程：
+用户回复后进入 Phase 1。
+
+---
+
+## Phase 1: Discovery（发现）
+
+> **目标**：通过多轮 web search 收集 8-15 条高质量证据条目。
+
+### 跳过条件（来自 ai-insight 委派）
+
+如果调用方已传入**搜索快照**（包含 ≥5 条带标题+摘要+URL 的证据），则：
+1. 直接将传入的证据作为 Discovery 输出
+2. **仅执行补充搜索**：针对传入证据中覆盖不足的维度（Technical/Market/Sentiment），补充 1-2 次定向搜索
+3. 跳过下方的完整搜索策略，直接进入 Phase 2
+
+### 搜索策略
+
+按 GUIDELINES.md Section 4 执行 3 类搜索，每类中英双语 query：
+
+| 类型 | 英文 Query | 中文 Query |
+|------|-----------|-----------|
+| **Technical** | `"{topic}" latest development {current_year}` | `"{topic}" 技术进展 最新 {current_year}` |
+| **Market** | `"{topic}" market impact industry` | `"{topic}" 市场影响 行业分析` |
+| **Sentiment** | `"{topic}" community reaction opinion` | `"{topic}" site:aibase.com OR site:jiqizhixin.com` |
+
+- standard 模式：每类各 1 次（共 6 次搜索）
+- deep 模式：每类各 1-2 次（共 9 次搜索），追加定向搜索：
+  - `"{topic}" site:techcrunch.com`
+  - `"{topic}" site:arxiv.org abstract`
+  - `"{topic}" site:github.com trending`
+- quick 模式：仅 Technical 类（共 3 次搜索）
+
+### 每次搜索后立即摘要
+
+防止上下文膨胀，每批搜索后**立即**将结果压缩为 Fact Sheet 条目：
+
+```
+[来源] 标题 - 一句话摘要 (日期)
+```
+
+示例：
+```
+[TechCrunch] OpenAI releases GPT-5 - 性能大幅提升，推理能力超过人类专家水平 (2025-03-20)
+[机器之心] 国内大模型厂商紧急跟进 - 百度、阿里相继发布对标声明 (2025-03-21)
+```
+
+### 进度展示
+
+向用户实时展示搜索进展，例如：
+
+```
+🔍 Technical 搜索中...（已收集 3 条）
+🔍 Market 搜索中...（已收集 7 条）
+🔍 Sentiment 搜索中...（已收集 12 条）
+✅ Discovery 完成，共收集 12 条证据
+```
+
+---
+
+## Phase 2: Evidence（证据整理）
+
+> **目标**：将 Discovery 收集的原始 Fact Sheet 整理为结构化证据表。
+
+### 处理规则
+
+1. **去重合并**：同一事件的不同来源合并为一条，保留所有 URL
+2. **可信度标注**：
+   - **High**：主流科技媒体、官方博客、论文（TechCrunch、机器之心、arxiv.org 等）
+   - **Medium**：社区讨论、行业分析（HN、Reddit、知乎）
+   - **Low**：个人博客、未经证实的报道
+3. **按时间排序**：新证据优先
+
+### 输出格式
+
+向用户展示 Markdown 表格：
+
+```markdown
+| 事实 | 来源 | 可信度 | 日期 |
+|------|------|--------|------|
+| GPT-5 发布，推理能力超越专家 | [TechCrunch](url) | High | 2025-03-20 |
+| 国内厂商相继发布对标声明 | [机器之心](url) | High | 2025-03-21 |
+| 社区担忧 AGI 安全问题 | [HN](url) | Medium | 2025-03-20 |
+```
+
+最少 8 条证据才能进入 Phase 2.5；若不足，返回 Phase 1 补充搜索。
+
+---
+
+## Phase 2.5: Deep Search（深度检索）
+
+> **目标**：针对热点从垂直数据源深度检索，补充高质量证据。
+> quick 模式跳过此阶段，直接进入 Phase 3。
+
+### 垂直数据源列表
+
+| 类型 | 数据源 | 搜索语法 |
+|------|--------|---------|
+| **中文 AI 媒体** | AIBase | `"{topic}" site:aibase.com` |
+| | 机器之心 | `"{topic}" site:jiqizhixin.com` |
+| | 量子位 | `"{topic}" site:qbitai.com` |
+| **英文技术源** | TechCrunch | `"{topic}" site:techcrunch.com` |
+| | arXiv | `"{topic}" site:arxiv.org abstract {current_year}` |
+| | GitHub | `"{topic}" site:github.com trending` |
+
+### 执行策略
+
+- **standard 模式**：执行 3-5 次定向搜索（中文源优先）
+- **deep 模式**：执行 6-9 次定向搜索（覆盖所有数据源）
+- **quick 模式**：跳过此阶段
+
+### Rate Limit 降级
+
+deep 模式下，若连续 2 次搜索返回错误（超时、rate limit、空结果），自动降级：
+
+1. 将剩余 Deep Search 搜索量上限降为 3 次（standard 模式水平）
+2. 向用户展示降级通知
+3. **不重试**已失败的查询，继续执行剩余搜索
+
+### 去重合并
+
+Deep Search 结果与 Phase 2 的 fact_sheet 合并时：
+
+1. **按 URL 去重**：相同 URL 跳过
+2. **按事件合并**：相同事件的不同来源合并为一条，保留所有 URL
+3. **保持时间排序**：新证据插入到对应时间位置
+
+### 进度展示
+
+```
+🔎 Deep Search 启动（standard 模式）
+
+🔎 搜索 AIBase...（已补充 2 条）
+🔎 搜索机器之心...（已补充 4 条）
+🔎 搜索 TechCrunch...（已补充 6 条）
+
+✅ Deep Search 完成，共补充 6 条高质量证据
+```
+
+Rate limit 降级时展示：
+
+```
+🔎 Deep Search 启动（deep 模式）
+
+🔎 搜索 AIBase...（已补充 2 条）
+🔎 搜索机器之心...（已补充 3 条）
+🔎 搜索量子位...❌ 搜索失败
+🔎 搜索 TechCrunch...❌ 连续失败
+⚠️ 搜索受限，已降级为 standard 模式搜索量
+🔎 搜索 arXiv...（已补充 4 条）
+
+✅ Deep Search 完成（降级模式），共补充 4 条高质量证据
+```
+
+---
+
+## Phase 3: Smart Synthesis（智能合成）
+
+> **目标**：单轮生成高质量分析，内嵌批判性思维和证据强度感知。
+
+### Analyst Persona（单轮合成）
+
+```
+你是一位资深 AI 行业分析师。基于以下证据材料，撰写一份结构化分析报告。
+
+要求：
+- 核心观点（1句话，20-25字）
+- 深度洞察（100字以内）
+- 关键信号（3-5个，每个标注 Strong/Moderate/Weak）
+- 行动建议（2-3条）
+- 置信度评分（基于证据质量，见下方规则）
+
+批判性思维：
+- 主动识别反面证据或争议点
+- 对证据不足的结论标注"部分观点认为..."
+- 置信度必须基于证据可信度和覆盖度
+
+证据不足降级：
+- 若 High 可信度证据 <3 条，在 insight 字段开头标注"⚠️ 证据有限，以下为初步判断："
+- 若证据仅覆盖 1 个维度，在 insight 中注明未覆盖的维度
+
+输出格式：严格 JSON，符合 analysis_packet schema。
+
+⚠️ 安全约束：
+输出内容必须遵守中国互联网内容规范。
+禁止涉及：政治敏感话题、领导人评论、国际争端立场。
+如发现话题本身敏感，终止分析并返回 { "blocked": true, "reason": "内容安全策略" }
+```
+
+### 置信度计算规则
+
+基于证据质量自动评分：
+
+| 条件 | 置信度 |
+|------|--------|
+| ≥5 条 High 可信度 + 覆盖 3 个维度（Technical/Market/Sentiment） | 0.8-1.0 |
+| 3-4 条 High 可信度 + 覆盖 2 个维度 | 0.65-0.79 |
+| 3-4 条 High 可信度 + 覆盖 1 个维度 | 0.5-0.64 |
+| <3 条 High 可信度 或 主要为 Low/Medium | <0.5 |
+
+### 向用户展示
+
+```
+🧠 Smart Synthesis 启动
+
+📊 分析中...（基于 12 条证据，其中 8 条 High 可信度）
+✅ 分析完成（置信度：0.85）
+
+核心观点：[20-25字摘要]
+```
+
+低置信度时（<0.5）展示：
+
+```
+🧠 Smart Synthesis 启动
+
+📊 分析中...（基于 4 条证据，其中 2 条 High 可信度）
+⚠️ 分析完成（置信度：0.38，证据有限）
+
+核心观点：[20-25字摘要]
+提示：当前证据主要来自单一维度，结论仅供参考。
+```
+
+---
+
+## Phase 4: Delivery（交付）
+
+> **目标**：生成小红书文案并调用 MCP 工具渲染发布。
+
+### Writer Persona
+
+```
+你是一位小红书爆款内容写手。基于分析结果撰写小红书笔记。
+
+要求：
+- 标题：含 emoji，12-20字，吸引点击
+- 正文：800-1200字，口语化但有深度
+- 段落间用 emoji 分隔
+- 末尾加 3-5 个话题标签
+- 避免过度营销语气
+
+输出格式：JSON { "title": "...", "content": "...", "tags": [...] }
+```
+
+### 生成 topic_id
+
+按 GUIDELINES.md Section 2.3 规则：
+
+```
+topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
+```
+
+日期取当前日期（UTC+8），哈希取话题标准名称的 SHA1 前 8 位。
+**不依赖后端**，Skill 侧自行计算。
+
+### 输出 analysis_packet（符合 GUIDELINES.md Section 2.1）
 
 ```json
 {
-  “topic”: “话题内容”,
-  “depth”: “standard”,
-  “image_count”: 0
+  "topic_id": "YYYYMMDD_abc123ef",
+  "title": "4-8字主标题",
+  "subtitle": "副标题",
+  "summary": "20-25字核心观点",
+  "insight": "100字深度洞察",
+  "signals": [
+    { "label": "信号名", "value": "Strong", "desc": "上下文描述" }
+  ],
+  "actions": ["用户行动建议1", "建议2"],
+  "confidence": 0.88,
+  "tags": ["#AI", "#标签"],
+  "xhs_copy": {
+    "title": "小红书标题（含emoji）",
+    "content": "小红书正文（800-1200字）",
+    "tags": ["标签1", "标签2"]
+  },
+  "sources": ["https://source1.com", "https://source2.com"]
 }
 ```
 
-高级客户端如需要更细粒度控制（如宿主端辩论），可选 split path：
+### 生成 renderer JSON payload（符合 GUIDELINES.md Section 1.1）
 
-1. 调用 `retrieve_and_report`
-2. 在宿主端完成 analyst/debater 辩论
-3. 调用 `submit_analysis_result`
-
-宿主端 debate 的最小执行规则：
-
-- **Analyst**：基于 `topic + news_content + source_stats` 先产出第一版结构化分析
-- **Debater**：只做反驳、补盲点、挑证据问题；如果分析已经充分，明确回复 `PASS`
-- **终止条件**：debater 回复包含 `PASS`，或达到 `max_rounds / debate_rounds`
-- **结束后**：把 `final_analysis + debate_history` 交给 `submit_analysis_result`
-
-建议使用下面的宿主端模板：
-
-- Analyst prompt："基于 reporter 提供的事实摘要与来源分布，输出一版可被挑战的结构化分析，避免直接写成社媒文案。"
-- Debater prompt："站在反方角度，指出这版分析中证据不足、推断过度、遗漏变量或更强解释；如果没有实质问题，回复 PASS。"
-
-使用 split path 的场景：
-
-- 用户明确要求”分步分析””先看证据再辩论”
-- 高级客户端能稳定执行宿主端多轮思考
-
-回退到 `analyze_topic` 的场景：
-
-- 默认场景
-- 用户明确要求”一步完成，不分步”
-- `retrieve_and_report` 或 `submit_analysis_result` 任一步骤失败
-
-回退时调用：
+默认生成 4 种卡片：
 
 ```json
 {
-  "topic": "话题内容",
-  "depth": "standard",
-  "image_count": 0
+  "specs": [
+    {
+      "card_type": "title",
+      "payload": {
+        "title": "4-8字标题",
+        "emoji": "🔍",
+        "theme": "warm"
+      }
+    },
+    {
+      "card_type": "impact",
+      "payload": {
+        "title": "标题",
+        "summary": "20-25字摘要",
+        "insight": "100字洞察",
+        "signals": [{ "label": "信号名称", "value": "Strong" }],
+        "actions": ["行动建议"],
+        "confidence": 0.88,
+        "tags": ["#AI"]
+      }
+    },
+    {
+      "card_type": "radar",
+      "payload": {
+        "labels": ["技术成熟度", "市场影响", "社区热度", "商业价值"],
+        "datasets": [{ "label": "话题评估", "data": [80, 75, 90, 70] }]
+      }
+    },
+    {
+      "card_type": "timeline",
+      "payload": {
+        "timeline": [
+          { "time": "日期", "event": "关键事件", "impact": "high" }
+        ]
+      }
+    }
+  ]
 }
 ```
 
-只有在用户明确要求“快速看一眼”“深度研究”“只看社区/论文/代码来源”“3轮辩论”“带2张图”时，才覆盖默认参数。
+### 向用户展示预览
 
-### 2. 轮询状态
+```
+✅ Synthesis 完成
 
-- 调用 `get_analysis_status(job_id)`
-- 任务运行中时，简要汇报进度和当前步骤
-- 持续轮询直到 `status=completed` 或 `status=failed`
+📋 分析摘要：
+  话题：{title}
+  核心观点：{summary}
+  置信度：{confidence}
+  关键信号：{signals[0].label}（{signals[0].value}）...
 
-### 3. 展示结果
+📝 小红书文案预览：
+  标题：{xhs_copy.title}
+  正文前300字：{xhs_copy.content[0:300]}...
 
-完成后调用 `get_analysis_result(job_id)`，向用户展示：
+需要生成卡片图片并发布吗？回复"生成卡片"或"发布"继续。
+```
 
-- 核心观点和深度洞察
-- 文案预览
-- 已分析来源、跳过来源、证据条数
-- 结果文件路径或卡片预览路径
+---
 
-### 4. 后处理
+## Phase 5: Delivery（交付）
 
-如果用户要求“生成卡片/做图”，调用：
+> **目标**：调用 MCP 工具渲染卡片并发布到小红书。
+> **这是唯一调用 MCP 工具的阶段。**
+
+### Step 1：用户确认
+
+询问用户确认后才执行以下步骤：
+
+```
+准备好了！
+- 生成卡片：调用 render_cards 渲染 4 张图
+- 发布到小红书：需要先确认账号已登录
+
+确认执行？（回复"确认"或"发布"）
+```
+
+### Step 2：渲染卡片
+
+调用 MCP `render_cards`（传入 Phase 4 生成的 specs 数组）：
 
 ```json
 {
-  "job_id": "job_xxx"
+  "specs": [/* Phase 4 生成的 specs 数组 */]
 }
 ```
 
-对应工具：`generate_topic_cards`
+展示渲染结果：
 
-默认优先生成：
-
-```json
-{
-  "job_id": "job_xxx",
-  "card_types": ["title", "impact", "radar", "timeline"]
-}
+```
+✅ 卡片渲染完成：
+  - title 卡片：/path/to/title.png
+  - impact 卡片：/path/to/impact.png
+  - radar 卡片：/path/to/radar.png
+  - timeline 卡片：/path/to/timeline.png
 ```
 
-如果用户明确要求发布，再调用：
+### Step 3：检查 XHS 登录状态
 
-```json
-{
-  "job_id": "job_xxx"
-}
-```
+调用 `check_xhs_status`：
 
-对应工具：`publish_to_xhs`
-
-如果用户说“登录小红书”“小红书登录”“扫码登录”，按以下流程：
-
-1. 调用 `check_xhs_status` 检查状态，若已登录则告知无需操作
-2. 若未登录，调用 `get_xhs_login_qrcode` 并保留返回的 `session_id`
-3. 如果客户端能显示图片，直接提示用户用小红书 App 扫码
-4. 如果客户端不能直接显示图片，提示用户打开返回的 `qr_image_url`、`qr_image_route` 或 `qr_image_path`
-5. 用户扫码后，调用 `check_xhs_login_session(session_id)` 检查状态
-6. 若返回需要验证码，调用 `submit_xhs_verification(session_id, code)`
-7. 登录成功后再继续发布链路
-
-对应工具：`check_xhs_status` + `get_xhs_login_qrcode` + `check_xhs_login_session` + `submit_xhs_verification`
-
-## 工具
-
-### retrieve_and_report
-
-```json
-{
-  "topic": "AI 话题内容",
-  "depth": "standard",
-  "source_groups": ["media"]
-}
-```
-
-### submit_analysis_result
-
-```json
-{
-  "topic": "AI 话题内容",
-  "news_content": "reporter 输出",
-  "final_analysis": "宿主端最终分析",
-  "debate_history": ["Analyst round 1", "Debater round 1"],
-  "source_stats": {"hn": 2},
-  "image_count": 0,
-  "xhs_publish_enabled": false
-}
-```
-
-### analyze_topic
-
-```json
-{
-  "topic": "AI 话题内容",
-  "depth": "standard",
-  "image_count": 0
-}
-```
-
-### get_analysis_status
-
-```json
-{
-  "job_id": "job_xxx",
-  "card_types": ["title", "impact", "radar", "timeline"]
-}
-```
-
-### get_analysis_result
-
-```json
-{
-  "job_id": "job_xxx"
-}
-```
-
-### generate_topic_cards
-
-```json
-{
-  "job_id": "job_xxx"
-}
-```
-
-### publish_to_xhs
-
-```json
-{
-  "job_id": "job_xxx"
-}
-```
-
-### check_xhs_status
-
-检查小红书 MCP 可用性和登录状态。
 ```json
 {}
 ```
 
-### get_xhs_login_qrcode
+- `login_status: true` → 继续 Step 5
+- `login_status: false` → 进入 XHS 登录流程（Step 4）
 
-获取登录二维码。
-```json
-{}
-```
+### Step 4：XHS 登录流程（未登录时）
 
-若返回中包含 `qr_image_url`、`qr_image_route` 或 `qr_image_path`，应优先把这些信息展示给用户，方便在无法直接显示图片的客户端中手动打开二维码。
-同时保留返回的 `session_id`，用于后续会话轮询和验证码提交。
+1. 调用 `get_xhs_login_qrcode` 获取二维码：
+   ```json
+   {}
+   ```
+   保留返回的 `session_id`，向用户展示二维码（`qr_ascii` 或 `qr_image_url`）。
 
-### check_xhs_login_session
+2. 提示用户扫码：
+   ```
+   请用小红书 App 扫描上方二维码登录。
+   扫码完成后回复"已扫码"。
+   ```
+
+3. 用户确认后，调用 `check_xhs_login_session`：
+   ```json
+   { "session_id": "sess_xxx" }
+   ```
+
+4. 若返回 `status: "pending"` → 等待用户再次确认后重试
+
+5. 若返回需要短信验证码 → 请用户提供验证码，调用 `submit_xhs_verification`：
+   ```json
+   { "session_id": "sess_xxx", "code": "123456" }
+   ```
+
+6. 登录成功（`status: "logged_in"`）→ 继续 Step 5
+
+> ⚠️ 用户扫码完成前不要自动重试发布；"登录成功"不等于"自动可以发布"，仍需用户确认。
+
+### Step 5：发布笔记
+
+用户明确确认发布后，调用 `publish_xhs_note`（**不传 job_id**，传入原始内容）：
 
 ```json
 {
-  "session_id": "sess_xxx"
+  "title": "{xhs_copy.title}",
+  "content": "{xhs_copy.content}",
+  "images": ["path/to/title.png", "path/to/impact.png", "path/to/radar.png", "path/to/timeline.png"],
+  "tags": ["{xhs_copy.tags[]}"]
 }
 ```
 
-### submit_xhs_verification
-
-```json
-{
-  "session_id": "sess_xxx",
-  "code": "123456"
-}
+**成功：**
+```
+✅ 发布成功！
+  笔记链接：https://www.xiaohongshu.com/...
 ```
 
-## 来源组说明
+**失败：**
+```
+❌ 发布失败：{error}
+不要自动重试，请用户决定下一步。
+```
 
-| 组名 | 包含来源 | 说明 |
-|------|---------|------|
-| media | aibase, jiqizhixin, qbitai, techcrunch_ai | AI 媒体新闻 |
-| research | hf_papers | 论文/研究 |
-| code | github_trending | 代码/开源 |
-| community | hn, reddit | 社区讨论 |
+> ⚠️ 发布失败时**不要自动重试**，等待用户指令。
 
-## 深度预设
+---
 
-| 深度 | 辩论轮数 | 正文提取上限 | 适用场景 |
-|------|---------|-------------|---------|
-| quick | 0 | 5 | 快速概览 |
-| standard | 2 | 10 | 标准分析 |
-| deep | 4 | 20 | 深度研究 |
+## 命令语义
+
+| 命令 | 行为 |
+|------|------|
+| `/analyze [topic]` | 触发完整 5 阶段流程（Phase 0 确认 → Phase 1-5） |
+| `/publish` | 跳到 Phase 5 Delivery（使用上一次 Synthesis 结果） |
+
+---
+
+## 深度预设汇总
+
+| 深度 | Deep Search 搜索量 | Discovery 搜索量 | 说明 |
+|------|-------------------|----------------|------|
+| quick | 0（跳过） | 3 | 快速概览，Evidence → Smart Synthesis |
+| standard（默认） | 3-5 | 6 | 标准深挖，中文源优先 |
+| deep | 6-9 | 9 | 深度研究，覆盖所有垂直数据源 |
+
+---
+
+## 零后端 LLM 保证
+
+本 Skill 所有分析推理（Discovery 摘要、Evidence 整理、Deep Search 检索、Smart Synthesis 生成）均在**宿主端 LLM** 完成。
+
+MCP 工具调用仅限：
+
+| 工具 | 阶段 | 用途 |
+|------|------|------|
+| `render_cards` | Phase 5 | 渲染可视化卡片图片 |
+| `check_xhs_status` | Phase 5 | 检查 XHS 登录状态 |
+| `get_xhs_login_qrcode` | Phase 5 | 获取扫码登录二维码 |
+| `check_xhs_login_session` | Phase 5 | 轮询扫码结果 |
+| `submit_xhs_verification` | Phase 5 | 提交短信验证码 |
+| `publish_xhs_note` | Phase 5 | 发布小红书笔记 |
+
+所有工具 schema 定义见 `shared/GUIDELINES.md` Section 1。

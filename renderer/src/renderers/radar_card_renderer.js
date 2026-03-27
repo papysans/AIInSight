@@ -167,7 +167,7 @@ export async function renderRadarCard({ labels = [], datasets = [] }) {
   ctx.font = '24px "SF Pro Display", "PingFang SC", "Noto Sans CJK SC", sans-serif'
   ctx.fillText('AIINSIGHT / EVIDENCE RADAR', 108, HEIGHT - 86)
   ctx.textAlign = 'right'
-  ctx.fillText('Preview Card', WIDTH - 108, HEIGHT - 86)
+  ctx.fillText('AIINSIGHT', WIDTH - 108, HEIGHT - 86)
 
   return canvas.toDataURL('image/png')
 }

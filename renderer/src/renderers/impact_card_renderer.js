@@ -131,7 +131,7 @@ export async function renderImpactCard({
   ctx.textBaseline = 'alphabetic'
   ctx.fillText('AIINSIGHT / IMPACT CARD', 108, HEIGHT - 86)
   ctx.textAlign = 'right'
-  ctx.fillText('Preview Card', WIDTH - 108, HEIGHT - 86)
+  ctx.fillText('AIINSIGHT', WIDTH - 108, HEIGHT - 86)
 
   if (insight) {
     ctx.textAlign = 'left'

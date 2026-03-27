@@ -38,10 +38,9 @@ The result is a system that can:
   - fix login status parsing,
   - normalize inner publish failures correctly,
   - and support the final publish path used by AI Daily and topic publishing.
-- Updated XHS-related MCP tools and backend routes:
+- Updated XHS-related MCP tools:
   - `opinion_mcp/tools/publish.py`
-  - `opinion_mcp/services/backend_client.py`
-  - `app/api/endpoints.py`
+  - `opinion_mcp/services/xiaohongshu_publisher.py` (直连 xhs-mcp，不再经 backend_client 中转)
 
 ### Why it matters
 

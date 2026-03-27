@@ -137,7 +137,7 @@ export async function renderTimelineCard({ timeline: rawTimeline = [] }) {
   ctx.textAlign = 'left'
   ctx.fillText('AIINSIGHT / DEBATE TIMELINE', 108, HEIGHT - 86)
   ctx.textAlign = 'right'
-  ctx.fillText('Preview Card', WIDTH - 108, HEIGHT - 86)
+  ctx.fillText('AIINSIGHT', WIDTH - 108, HEIGHT - 86)
 
   return canvas.toDataURL('image/png')
 }

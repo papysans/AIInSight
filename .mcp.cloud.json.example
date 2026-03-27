@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "opinion-mcp": {
+      "type": "url",
+      "url": "https://your-domain.com/mcp",
+      "headers": {
+        "X-API-Key": "your-api-key-here"
+      }
+    }
+  }
+}

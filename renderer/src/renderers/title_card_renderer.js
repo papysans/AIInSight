@@ -528,7 +528,7 @@ export async function renderTitleCard({ title, emoji = '🤔', theme = 'cool', e
   ctx.fillText('AIINSIGHT / AI HOT TOPIC COVER', 112, panelY + 150)
 
   ctx.textAlign = 'right'
-  ctx.fillText('Preview Card', WIDTH - 112, panelY + 150)
+  ctx.fillText('AIINSIGHT', WIDTH - 112, panelY + 150)
   ctx.globalAlpha = 1
 
   ctx.fillStyle = colors.accent

@@ -189,7 +189,7 @@ export async function renderDailyRankCard({ date, title = 'AI 每日热点', top
   ctx.textAlign = 'left'
   ctx.fillText('AIINSIGHT / RANKING CARD', 108, HEIGHT - 86)
   ctx.textAlign = 'right'
-  ctx.fillText('Preview Card', WIDTH - 108, HEIGHT - 86)
+  ctx.fillText('AIINSIGHT', WIDTH - 108, HEIGHT - 86)
 
   return canvas.toDataURL('image/png')
 }

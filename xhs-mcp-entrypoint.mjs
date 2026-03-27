@@ -93,6 +93,47 @@ const allTools = [
   legacyPublishTool,
 ];
 
+/**
+ * Post-publish verification: query creator center for the newly published note.
+ * Returns the matched note object if found, or null.
+ */
+async function verifyPublishViaCreatorCenter(client, title, timeoutMs = 15000) {
+  const VERIFY_WAIT_MS = 5000;
+  console.error(`[publish-verify] Waiting ${VERIFY_WAIT_MS}ms for platform sync...`);
+  await new Promise((r) => setTimeout(r, VERIFY_WAIT_MS));
+
+  try {
+    console.error('[publish-verify] Querying creator center for recent notes...');
+    const notes = await client.getMyPublishedNotes(0, 10, timeoutMs);
+    console.error(`[publish-verify] Got ${notes.length} notes from creator center`);
+
+    if (!notes || notes.length === 0) return null;
+
+    const publishWindowMs = 3 * 60 * 1000; // 3 min window
+    const now = Date.now();
+
+    for (const note of notes) {
+      // Title must match exactly
+      if (note.title !== title) continue;
+
+      // Check publish time is within window (if available)
+      if (note.time) {
+        const noteTime = new Date(note.time).getTime();
+        if (now - noteTime > publishWindowMs) continue;
+      }
+
+      console.error(`[publish-verify] Matched note: id=${note.id}, title=${note.title}`);
+      return note;
+    }
+
+    console.error('[publish-verify] No matching note found in creator center');
+    return null;
+  } catch (err) {
+    console.error('[publish-verify] Creator center query failed:', err?.message || err);
+    return null;
+  }
+}
+
 async function handleLegacyPublishTool(args) {
   const params = z
     .object({
@@ -125,7 +166,14 @@ async function handleLegacyPublishTool(args) {
         scheduleTime: params.scheduleTime,
       });
 
-      if (result.success) {
+      if (!result.success) {
+        return result;
+      }
+
+      // --- Verification gate ---
+      // If upstream already gave us a noteId, trust it.
+      if (result.noteId) {
+        console.error(`[publish-verify] Upstream returned noteId=${result.noteId}, skipping verification`);
         db.published.record({
           accountId: ctx.accountId,
           noteId: result.noteId,
@@ -136,9 +184,44 @@ async function handleLegacyPublishTool(args) {
           tags: params.tags,
           status: params.scheduleTime ? 'scheduled' : 'published',
         });
+        return {
+          success: true,
+          noteId: result.noteId,
+          noteUrl: `https://www.xiaohongshu.com/explore/${result.noteId}`,
+        };
       }
 
-      return result;
+      // Upstream didn't return noteId (the common case due to upstream bug).
+      // Verify via creator center.
+      const matched = await verifyPublishViaCreatorCenter(ctx.client, params.title);
+
+      if (matched && matched.id) {
+        console.error(`[publish-verify] Verified! noteId=${matched.id}`);
+        db.published.record({
+          accountId: ctx.accountId,
+          noteId: matched.id,
+          title: params.title,
+          content: params.content,
+          noteType: 'image',
+          images: params.images,
+          tags: params.tags,
+          status: params.scheduleTime ? 'scheduled' : 'published',
+        });
+        return {
+          success: true,
+          noteId: matched.id,
+          noteUrl: `https://www.xiaohongshu.com/explore/${matched.id}`,
+          verifiedVia: 'creator_center',
+        };
+      }
+
+      // Verification failed — skip db record (can't confirm publish), return error
+      console.error('[publish-verify] Verification failed — returning submitted_but_unverified');
+      return {
+        success: false,
+        error: 'submitted_but_unverified',
+        message: '发布动作已提交，但未在创作者中心确认到新笔记。请在小红书 App 中手动检查。',
+      };
     },
     {
       logParams: { title: params.title, imageCount: params.images.length },
@@ -162,6 +245,9 @@ async function handleLegacyPublishTool(args) {
             {
               account: r.account,
               success: true,
+              noteId: r.result?.noteId,
+              noteUrl: r.result?.noteUrl,
+              verifiedVia: r.result?.verifiedVia,
               result: r.result,
             },
             null,
@@ -181,6 +267,8 @@ async function handleLegacyPublishTool(args) {
             results: results.map((r) => ({
               account: r.account,
               success: r.success,
+              noteId: r.success ? r.result?.noteId : undefined,
+              noteUrl: r.success ? r.result?.noteUrl : undefined,
               result: r.success ? r.result : undefined,
               error: r.error,
             })),

@@ -1,22 +1,42 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
-### Requirement: Official upstream login flow is the supported public XHS authentication path
-The system SHALL define the upstream official Xiaohongshu authentication workflow exposed by `xiaohongshu-mcp` as the supported public authentication flow for Xiaohongshu operations exposed through skills, MCP-facing guidance, and user-facing operational documentation.
+### Requirement: 登录二维码获取
 
-#### Scenario: User needs to authenticate for XHS publishing
-- **WHEN** a user or agent reaches an XHS operation without a valid login state
-- **THEN** the documented recovery path MUST direct them to check login status, obtain the upstream login QR code when needed, complete the scan in the Xiaohongshu app, and re-check login state before continuing
+登录流程从 xpzouying 的 `get_login_qrcode` 单步操作改为 ShunL 的两步操作：`xhs_add_account`（获取 sessionId + QR）→ `xhs_check_login_session`（轮询状态）。
 
-### Requirement: Public guidance MUST present the upstream QR-based login flow as the supported user flow
-Public skills, usage guides, and public-facing architecture documentation MUST describe the upstream official login status and QR-login workflow as the supported path, including the client-specific QR opening instructions needed when inline image rendering is unavailable.
+外部 API 端点 `GET /api/xhs/login-qrcode` MUST 保持不变，内部实现改为调用 ShunL MCP 的 `xhs_add_account`。
 
-#### Scenario: Public documentation references XHS login
-- **WHEN** a public document or skill explains how to authenticate to Xiaohongshu
-- **THEN** it MUST describe the upstream login status and QR-login workflow as the supported path and MUST NOT describe cookie injection as the default public operator flow
+返回的 `session_id` SHALL 被缓存，供后续 `check_qrcode_status` 和 `submit_verification` 使用。
 
-### Requirement: Legacy cookie-upload materials MUST be removed or clearly marked as migration/internal-only
-If cookie-upload routes, helper functions, or notes remain in the repository for migration, debugging, or staged cleanup, the system documentation SHALL mark them as legacy or internal-only and SHALL separate them from the supported public contract.
+#### Scenario: 获取登录二维码
 
-#### Scenario: Repository retains cookie-upload-related helpers
-- **WHEN** cookie-upload endpoints, handlers, or notes remain in code or docs
-- **THEN** those materials MUST be labeled as migration/internal-only and MUST NOT be described as part of the supported public agent workflow
+- **WHEN** 调用 `GET /api/xhs/login-qrcode`
+- **THEN** 内部调用 `xhs_add_account`，返回 QR 码图片/URL 和 `session_id`，格式兼容现有 `XhsLoginQrcodeResponse`
+
+#### Scenario: 已登录时获取二维码
+
+- **WHEN** 调用 `GET /api/xhs/login-qrcode` 但用户已登录
+- **THEN** 返回 `{"success": true, "already_logged_in": true, "message": "已登录，无需扫码"}`
+
+### Requirement: 登录状态检查
+
+`GET /api/xhs/status` 和 `check_xhs_status` MCP 工具 MUST 继续工作，内部改为调用 ShunL 的 `xhs_check_auth_status`。
+
+#### Scenario: 检查已登录状态
+
+- **WHEN** 调用 `GET /api/xhs/status` 且 ShunL 报告账号已认证
+- **THEN** 返回 `{"mcp_available": true, "login_status": true, "message": "..."}`
+
+#### Scenario: 检查未登录状态
+
+- **WHEN** 调用 `GET /api/xhs/status` 且无已认证账号
+- **THEN** 返回 `{"mcp_available": true, "login_status": false, "message": "..."}`
+
+### Requirement: Cookie 持久化方式变更
+
+存储从 `cookies.json` 文件改为 ShunL 的 SQLite 数据库 (`~/.xhs-mcp/data.db`)。旧的 cookie 上传接口 (`POST /api/xhs/upload-cookies`) 可以保留但标记为 deprecated。
+
+#### Scenario: 重启后会话保持
+
+- **WHEN** xhs-mcp 容器重启
+- **THEN** SQLite 中的会话数据通过 volume 挂载持久化，无需重新登录

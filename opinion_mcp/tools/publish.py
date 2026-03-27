@@ -1,120 +1,174 @@
 """
 MCP 发布工具
 
-包含小红书发布相关的 MCP 工具与内部辅助函数。
-
-支持两种发布模式:
-- ai_only: 阶段 F，仅使用 AI 生成的配图
-- ai_and_cards: 阶段 B，同时使用数据卡片和 AI 配图
-
-Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5
+包含小红书发布相关的 MCP 工具。
 """
 
-import sys
 from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from opinion_mcp.services.account_context import get_account_id
-from opinion_mcp.services.backend_client import backend_client
-from opinion_mcp.services.job_manager import job_manager
-from opinion_mcp.utils.url_validator import filter_valid_urls, download_images
+from opinion_mcp.services.xiaohongshu_publisher import xiaohongshu_publisher
 
 
 # ============================================================
-# 辅助函数
+# 敏感关键词预检（Section 7.2 preflight）
+# ============================================================
+
+_BLOCKED_KEYWORDS = [
+    "习近平", "政治局", "中央委员会", "台湾独立", "天安门", "法轮功",
+    "新疆集中营", "西藏独立", "香港独立", "颠覆国家政权",
+]
+
+
+def _preflight_content_check(title: str, content: str) -> Optional[Dict[str, Any]]:
+    """扫描 title + content 中的敏感关键词。命中则返回拒绝响应，否则返回 None。"""
+    combined = (title or "") + " " + (content or "")
+    for kw in _BLOCKED_KEYWORDS:
+        if kw in combined:
+            return {
+                "success": False,
+                "error": "content_policy_violation",
+                "reason": "内容安全策略阻止发布",
+            }
+    return None
+
+
+# ============================================================
+# publish_xhs_note - 核心发布工具
 # ============================================================
 
 
-def get_image_publish_mode() -> str:
-    """
-    获取当前图片发布模式
-
-    Property 6: Configuration Mode Behavior
-    For any configuration where `image_publish_mode` is "ai_only",
-    the publish tool SHALL use only AI images.
-    """
-    try:
-        # 动态导入以支持热加载
-        sys.path.insert(0, ".")
-        from app.config import Config
-
-        return str(Config.get_image_publish_mode())
-    except ImportError:
-        logger.warning("[publish] 无法导入 app.config，使用默认模式 ai_only")
-        return "ai_only"
-
-
-async def collect_images_for_publish(
-    result: Any,
-    mode: str,
-) -> tuple[List[str], List[str]]:
-    """
-    根据发布模式收集图片并下载到本地
-
-    火山引擎生成的图片 URL 有时效性，需要先下载到本地再上传到小红书。
-
-    Property 4: Publish Image Ordering
-    For any publish request in "ai_and_cards" mode, the images SHALL be ordered as:
-    InsightCanvas → KeyFindingsCanvas → DebateTimelineCanvas → AI images.
-    In "ai_only" mode, only AI images SHALL be included in their original order.
+async def publish_xhs_note(
+    title: str,
+    content: str,
+    images: List[str],
+    tags: Optional[List[str]] = None,
+    account_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """发布小红书笔记（接受原始内容）
 
     Args:
-        result: 分析结果对象
-        mode: 发布模式 ("ai_only" 或 "ai_and_cards")
+        title: 笔记标题
+        content: 笔记正文
+        images: 图片路径或 URL 列表
+        tags: 话题标签列表（可选）
+        account_id: 账号 ID（可选，从上下文自动获取）
 
     Returns:
-        Tuple[List[str], List[str]]: (本地图片路径列表, 下载失败的URL列表)
+        { "success": bool, "note_url": str }
     """
-    # 收集图片 URL
-    all_images: List[str] = []
+    logger.info(f"[publish_xhs_note] 发布到小红书: title={title[:30] if title else ''}...")
+    account_id = account_id or get_account_id()
 
-    if mode == "ai_and_cards":
-        # 阶段 B: 先添加数据卡片，再添加 AI 配图
-        if result.cards:
-            cards = result.cards
-            if cards.title_card:
-                all_images.append(cards.title_card)
-            if getattr(cards, "impact_card", None):
-                all_images.append(cards.impact_card)
-            if cards.platform_radar:
-                all_images.append(cards.platform_radar)
-            if cards.debate_timeline:
-                all_images.append(cards.debate_timeline)
-            if cards.trend_analysis:
-                all_images.append(cards.trend_analysis)
+    # 参数验证
+    if not title or not title.strip():
+        return {"success": False, "error": "标题不能为空"}
+    if not content or not content.strip():
+        return {"success": False, "error": "正文不能为空"}
+    if not images:
+        return {"success": False, "error": "至少需要一张图片"}
 
-    # 添加 AI 生成图片
-    if result.ai_images:
-        all_images.extend(result.ai_images)
+    # Preflight 安全检查（Section 7.2）
+    blocked = _preflight_content_check(title, content)
+    if blocked:
+        return blocked
 
-    if not all_images:
-        return [], []
+    publish_tags = tags or []
 
-    # 下载图片到本地（火山引擎 URL 有时效性）
-    logger.info(f"[collect_images] 开始下载 {len(all_images)} 张图片到本地...")
-    local_paths, download_results = await download_images(
-        all_images,
-        timeout=30.0,
-        concurrency=3,
-    )
+    try:
+        publish_result = await xiaohongshu_publisher.publish_content(
+            title=title,
+            content=content,
+            images=images,
+            tags=publish_tags,
+            account_id=account_id,
+        )
 
-    # 收集失败的图片
-    failed_images = [r.original_url for r in download_results if not r.success]
+        if not publish_result.get("success"):
+            error_msg = (
+                publish_result.get("message")
+                or publish_result.get("error")
+                or "发布失败"
+            )
+            logger.error(f"[publish_xhs_note] 发布失败: {error_msg}")
+            failure_result: Dict[str, Any] = {
+                "success": False,
+                "error": error_msg,
+                "note_url": None,
+            }
+            for extra_key in (
+                "login_required",
+                "login_qrcode",
+                "qr_image_url",
+                "qr_image_route",
+                "qr_image_path",
+                "expires_at",
+            ):
+                if extra_key in publish_result:
+                    failure_result[extra_key] = publish_result.get(extra_key)
+            return failure_result
 
-    return local_paths, failed_images
+        # Try note_url from publish_content's normalized result first
+        note_url = publish_result.get("note_url")
+
+        # Fallback: dig into nested data
+        if not note_url:
+            data = publish_result.get("data")
+            if isinstance(data, dict):
+                note_url = data.get("note_url") or data.get("url")
+                # Try noteId → construct URL
+                if not note_url:
+                    content_list = data.get("content", [])
+                    if isinstance(content_list, list) and content_list:
+                        try:
+                            import json as _json
+                            text = content_list[0].get("text", "") if isinstance(content_list[0], dict) else ""
+                            parsed = _json.loads(text) if text.strip().startswith("{") else {}
+                            if isinstance(parsed, dict):
+                                note_id = parsed.get("noteId") or (
+                                    parsed.get("result", {}).get("noteId")
+                                    if isinstance(parsed.get("result"), dict) else None
+                                )
+                                if note_id:
+                                    note_url = f"https://www.xiaohongshu.com/explore/{note_id}"
+                        except (ValueError, TypeError, KeyError):
+                            pass
+
+        # Defense layer: if we still have no note_url, treat as unverified
+        if not note_url:
+            logger.warning("[publish_xhs_note] 上游返回 success 但 note_url 为空，判定为 submitted_but_unverified")
+            return {
+                "success": False,
+                "error": "submitted_but_unverified",
+                "note_url": None,
+                "message": "发布动作已提交，但未能确认笔记已生成。请在小红书 App 中手动检查。",
+            }
+
+        logger.info(f"[publish_xhs_note] 发布成功: note_url={note_url}")
+        return {"success": True, "note_url": note_url}
+
+    except Exception as e:
+        logger.exception(f"[publish_xhs_note] 发布异常: {e}")
+        return {"success": False, "error": str(e), "note_url": None}
 
 
 # ============================================================
-# 6.4 publish_to_xhs 工具 - 发布到小红书
+# XHS 登录相关工具
 # ============================================================
+
+
+async def check_xhs_status(account_id: Optional[str] = None) -> Dict[str, Any]:
+    """检查小红书 MCP 服务可用性和登录状态。"""
+    logger.info("[check_xhs_status] 检查小红书状态")
+    return await xiaohongshu_publisher.get_status(account_id=account_id)
 
 
 async def get_xhs_login_qrcode(account_id: Optional[str] = None) -> Dict[str, Any]:
     """获取小红书登录二维码信息。"""
     logger.info("[get_xhs_login_qrcode] 获取登录二维码")
-    result = await backend_client.get_xhs_login_qrcode(account_id=account_id)
+    result = await xiaohongshu_publisher.get_login_qrcode(account_id=account_id)
 
-    # Embed ASCII QR prominently for CLI clients
     qr_ascii = result.get("qr_ascii")
     if qr_ascii and result.get("success"):
         result["cli_display"] = (
@@ -130,14 +184,14 @@ async def get_xhs_login_qrcode(account_id: Optional[str] = None) -> Dict[str, An
 
 async def reset_xhs_login(account_id: Optional[str] = None) -> Dict[str, Any]:
     logger.info("[reset_xhs_login] 重置登录状态")
-    return await backend_client.reset_xhs_login(account_id=account_id)
+    return await xiaohongshu_publisher.reset_login(account_id=account_id)
 
 
 async def submit_xhs_verification(
     session_id: str, code: str, account_id: Optional[str] = None
 ) -> Dict[str, Any]:
     logger.info(f"[submit_xhs_verification] session_id={session_id}")
-    return await backend_client.submit_xhs_verification(
+    return await xiaohongshu_publisher.submit_verification(
         session_id, code, account_id=account_id
     )
 
@@ -146,383 +200,26 @@ async def check_xhs_login_session(
     session_id: str, account_id: Optional[str] = None
 ) -> Dict[str, Any]:
     logger.info(f"[check_xhs_login_session] session_id={session_id}")
-    return await backend_client.check_xhs_login_session(
+    return await xiaohongshu_publisher.check_login_session(
         session_id, account_id=account_id
     )
 
 
-async def publish_to_xhs(
-    job_id: str,
-    title: Optional[str] = None,
-    tags: Optional[List[str]] = None,
-    account_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    将分析结果发布到小红书
-
-    根据配置的 image_publish_mode 决定使用哪些图片:
-    - ai_only: 仅使用 AI 生成的配图
-    - ai_and_cards: 使用数据卡片 + AI 配图
-
-    Args:
-        job_id: 分析任务 ID，将使用该任务的结果发布
-        title: 自定义标题，留空则使用分析结果的标题
-        tags: 话题标签列表，留空则使用分析结果的标签
-
-    Returns:
-        Dict 包含:
-        - success: bool - 是否成功
-        - job_id: str - 任务 ID
-        - note_url: str - 笔记链接（成功时）
-        - message: str - 消息
-        - images_used: int - 使用的图片数量
-        - failed_images: List[str] - 验证失败的图片
-        - publish_mode: str - 使用的发布模式
-    """
-    logger.info(f"[publish_to_xhs] 发布到小红书: job_id={job_id}")
-    account_id = account_id or get_account_id()
-
-    # 获取发布模式
-    publish_mode = get_image_publish_mode()
-    logger.info(f"[publish_to_xhs] 发布模式: {publish_mode}")
-
-    # 参数验证
-    if not job_id:
-        return {
-            "success": False,
-            "error": "job_id 不能为空",
-            "job_id": None,
-            "note_url": None,
-            "message": "缺少任务 ID",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 获取任务信息
-    job = job_manager.get_job(job_id, account_id=account_id)
-    if not job:
-        return {
-            "success": False,
-            "error": f"任务不存在: {job_id}",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "任务不存在",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 检查是否已发布（防止重复发布）
-    if job.published:
-        logger.warning(
-            f"[publish_to_xhs] 任务已发布过，拒绝重复发布: job_id={job_id}, published_at={job.published_at}"
-        )
-        return {
-            "success": False,
-            "error": "该任务已发布过，不能重复发布。如需重新发布，请重新分析话题。",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "已发布过，拒绝重复发布",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-            "already_published": True,
-            "published_at": job.published_at.isoformat() if job.published_at else None,
-        }
-
-    # 检查任务状态
-    if job.is_running:
-        return {
-            "success": False,
-            "error": "任务仍在运行中，请等待完成后再发布",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "任务未完成",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    if job.is_failed:
-        return {
-            "success": False,
-            "error": f"任务失败，无法发布: {job.error_message}",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "任务失败",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 获取分析结果
-    result = job.result
-    if not result:
-        return {
-            "success": False,
-            "error": "任务没有结果数据",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "无结果数据",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 获取文案内容
-    copywriting = result.copywriting
-    if not copywriting:
-        return {
-            "success": False,
-            "error": "任务没有文案数据",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "无文案数据",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 使用自定义标题或原标题
-    publish_title = title or copywriting.title
-    if not publish_title:
-        return {
-            "success": False,
-            "error": "标题不能为空",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "缺少标题",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 使用自定义标签或原标签
-    publish_tags = tags if tags else (copywriting.tags if copywriting.tags else [])
-    logger.info(f"[publish_to_xhs] Tags 详情:")
-    logger.info(f"  - 自定义 tags 参数: {tags}")
-    logger.info(f"  - copywriting.tags: {copywriting.tags}")
-    logger.info(f"  - 最终使用: {publish_tags}")
-
-    # 获取正文内容
-    content = copywriting.content
-    if not content:
-        return {
-            "success": False,
-            "error": "正文内容不能为空",
-            "job_id": job_id,
-            "note_url": None,
-            "message": "缺少正文",
-            "images_used": 0,
-            "failed_images": [],
-            "publish_mode": publish_mode,
-        }
-
-    # 收集并验证图片
-    valid_images, failed_images = await collect_images_for_publish(result, publish_mode)
-
-    if not valid_images:
-        error_msg = "没有可发布的图片"
-        if failed_images:
-            error_msg += f"，{len(failed_images)} 个图片验证失败"
-        return {
-            "success": False,
-            "error": error_msg,
-            "job_id": job_id,
-            "note_url": None,
-            "message": error_msg,
-            "images_used": 0,
-            "failed_images": failed_images,
-            "publish_mode": publish_mode,
-        }
-
-    # 记录图片信息
-    logger.info(
-        f"[publish_to_xhs] 本地图片: {len(valid_images)}, 下载失败: {len(failed_images)}"
-    )
-
-    try:
-        # 调用后端发布 API
-        publish_result = await backend_client.publish_xhs(
-            title=publish_title,
-            content=content,
-            images=valid_images,
-            tags=publish_tags,
-            account_id=account_id,
-        )
-
-        if not publish_result.get("success"):
-            error_msg = (
-                publish_result.get("message")
-                or publish_result.get("error")
-                or "发布失败"
-            )
-            logger.error(f"[publish_to_xhs] 发布失败: {error_msg}")
-            failure_result = {
-                "success": False,
-                "error": error_msg,
-                "job_id": job_id,
-                "note_url": None,
-                "message": error_msg,
-                "images_used": len(valid_images),
-                "failed_images": failed_images,
-                "publish_mode": publish_mode,
-            }
-            for extra_key in (
-                "login_required",
-                "login_qrcode",
-                "qr_image_url",
-                "qr_image_route",
-                "qr_image_path",
-                "expires_at",
-            ):
-                if extra_key in publish_result:
-                    failure_result[extra_key] = publish_result.get(extra_key)
-            return failure_result
-
-        # 获取笔记链接
-        note_url = None
-        data = publish_result.get("data")
-        if isinstance(data, dict):
-            note_url = data.get("note_url") or data.get("url")
-
-        # 标记任务已发布（防止重复发布）
-        from datetime import datetime
-
-        job.published = True
-        job.published_at = datetime.now()
-        logger.info(f"[publish_to_xhs] 已标记任务为已发布: job_id={job_id}")
-
-        logger.info(
-            f"[publish_to_xhs] 发布成功: note_url={note_url}, images_used={len(valid_images)}"
-        )
-
-        return {
-            "success": True,
-            "job_id": job_id,
-            "note_url": note_url,
-            "message": "发布成功",
-            "images_used": len(valid_images),
-            "failed_images": failed_images,
-            "publish_mode": publish_mode,
-        }
-
-    except Exception as e:
-        logger.exception(f"[publish_to_xhs] 发布异常: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "job_id": job_id,
-            "note_url": None,
-            "message": f"发布异常: {str(e)}",
-            "images_used": 0,
-            "failed_images": failed_images,
-            "publish_mode": publish_mode,
-        }
-
-
-# ============================================================
-# XHS 状态检查
-# ============================================================
-
-
-async def check_xhs_status(account_id: Optional[str] = None) -> Dict[str, Any]:
-    """检查小红书 MCP 服务可用性和登录状态。"""
-    logger.info("[check_xhs_status] 检查小红书状态")
-    return await backend_client.get_xhs_status(account_id=account_id)
-
-
-# ============================================================
-# ============================================================
-
-
-async def xhs_login(account_id: Optional[str] = None) -> Dict[str, Any]:
-    logger.info("[xhs_login] 统一登录流程")
-
-    # 1. 检查当前状态
-    status = await backend_client.get_xhs_status(account_id=account_id)
-    if status.get("login_status"):
-        return {
-            "success": True,
-            "already_logged_in": True,
-            "message": status.get("message", "已登录，无需扫码"),
-        }
-
-    login_result = await backend_client.get_xhs_login_qrcode(account_id=account_id)
-    if login_result.get("success") and (
-        login_result.get("qr_image_url")
-        or login_result.get("qr_image_route")
-        or login_result.get("qr_image_path")
-    ):
-        merged = {
-            **login_result,
-            "login_method": "xhs-mcp",
-            "poll_hint": "请在小红书 App 扫码后重新调用 check_xhs_status 确认登录状态；若客户端不显示图片，请打开 qr_image_url、qr_image_route 或 qr_image_path。",
-        }
-        # Embed ASCII QR for CLI clients
-        qr_ascii = login_result.get("qr_ascii")
-        if qr_ascii:
-            merged["cli_display"] = (
-                f"\n{login_result.get('message', '请使用小红书 App 扫码登录')}\n\n"
-                f"{qr_ascii}\n\n"
-                f"📱 请用小红书 App 扫描上方二维码\n"
-                f"⏱ 过期时间: {login_result.get('expires_at', '未知')}\n"
-                f"🔗 浏览器预览: {login_result.get('qr_preview_url', 'N/A')}"
-            )
-        return merged
-
-    if login_result.get("already_logged_in"):
-        return {
-            "success": True,
-            "already_logged_in": True,
-            "message": login_result.get("message", "已登录"),
-        }
-
-    return {
-        "success": False,
-        "message": login_result.get("message", "获取登录二维码失败"),
-    }
-
-
-# ============================================================
-# Cookie 注入工具 (Phase 1)
-# ============================================================
-
-
 async def upload_xhs_cookies(cookies_data: Any) -> Dict[str, Any]:
-    """将 cookies 注入到 xhs-mcp sidecar 并验证登录态。
-
-    Args:
-        cookies_data: go-rod 格式的 cookies JSON 数组 (来自 xiaohongshu-login 二进制)
-
-    Returns:
-        {"success": bool, "message": str, "login_verified": bool}
-    """
+    """将 cookies 注入到 xhs-mcp sidecar 并验证登录态。"""
     logger.info("[upload_xhs_cookies] 注入 cookies")
-    return await backend_client.upload_xhs_cookies(cookies_data)
-
-
-# ============================================================
-# ============================================================
+    return await xiaohongshu_publisher.verify_and_save_cookies(cookies_data)
 
 
 async def get_xhs_login_qrcode_v2() -> Dict[str, Any]:
     """通过 Playwright 代理获取小红书登录二维码（不依赖 xhs-mcp 原生登录）。"""
     logger.info("[get_xhs_login_qrcode_v2] 获取 Playwright 登录二维码")
-    return await backend_client.get_xhs_login_qrcode_v2()
+    return await xiaohongshu_publisher.start_playwright_login()
 
 
 async def poll_xhs_login_v2(session_id: str) -> Dict[str, Any]:
-    """轮询 Playwright 登录状态。
-
-    Args:
-        session_id: start_playwright_login 返回的会话 ID
-
-    Returns:
-        {"status": "pending"|"logged_in"|"expired", ...}
-    """
-    return await backend_client.poll_xhs_login_v2(session_id)
+    """轮询 Playwright 登录状态。"""
+    return await xiaohongshu_publisher.poll_playwright_login(session_id)
 
 
 # ============================================================
@@ -530,12 +227,13 @@ async def poll_xhs_login_v2(session_id: str) -> Dict[str, Any]:
 # ============================================================
 
 __all__ = [
+    "publish_xhs_note",
     "check_xhs_status",
-    "xhs_login",
     "get_xhs_login_qrcode",
     "reset_xhs_login",
+    "submit_xhs_verification",
+    "check_xhs_login_session",
     "upload_xhs_cookies",
     "get_xhs_login_qrcode_v2",
     "poll_xhs_login_v2",
-    "publish_to_xhs",
 ]
