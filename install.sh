@@ -86,91 +86,66 @@ download() {
 # Claude Code uses .agents/skills/ (new version)
 # Opencode / Costrict / VSCode Costrict use .opencode/skills/ (legacy version)
 
-install_claude_code() {
-  local base_dir="$HOME/.claude/skills"
+install_skills() {
+  local base_dir="$1"
+  local source_prefix="$2"
 
   for skill in $SKILLS; do
     mkdir -p "$base_dir/$skill"
     echo "Downloading $skill..."
-    download "$BASE_URL/.agents/skills/$skill/SKILL.md" "$base_dir/$skill/SKILL.md"
+    download "$BASE_URL/$source_prefix/$skill/SKILL.md" "$base_dir/$skill/SKILL.md"
   done
 
   mkdir -p "$base_dir/shared"
   echo "Downloading shared guidelines..."
-  download "$BASE_URL/.agents/skills/shared/GUIDELINES.md" "$base_dir/shared/GUIDELINES.md"
+  download "$BASE_URL/$source_prefix/shared/GUIDELINES.md" "$base_dir/shared/GUIDELINES.md"
+}
+
+install_claude_code() {
+  install_skills "$HOME/.claude/skills" ".agents/skills"
 
   echo ""
   echo "=== AIInSight Skills installed (Claude Code) ==="
   echo ""
-  echo "Skills: $base_dir/"
+  echo "Skills: $HOME/.claude/skills/"
   echo ""
   echo "Next: Configure MCP connection in ~/.claude/.mcp.json"
   echo "Then try: \"今日AI热点\" or \"帮我分析 GPT-5\""
 }
 
 install_opencode() {
-  local base_dir="$HOME/.opencode/skills"
-
-  for skill in $SKILLS; do
-    mkdir -p "$base_dir/$skill"
-    echo "Downloading $skill..."
-    download "$BASE_URL/.opencode/skills/$skill/SKILL.md" "$base_dir/$skill/SKILL.md"
-  done
-
-  mkdir -p "$base_dir/shared"
-  echo "Downloading shared guidelines..."
-  download "$BASE_URL/.opencode/skills/shared/GUIDELINES.md" "$base_dir/shared/GUIDELINES.md"
+  install_skills "$HOME/.opencode/skills" ".opencode/skills"
 
   echo ""
   echo "=== AIInSight Skills installed (Opencode) ==="
   echo ""
-  echo "Skills: $base_dir/"
+  echo "Skills: $HOME/.opencode/skills/"
   echo ""
-  echo "Next: Configure MCP connection in ~/.opencode/opencode.json"
+  echo "Next: Configure MCP connection in project opencode.json"
   echo "Then try: \"今日AI热点\" or \"帮我分析 GPT-5\""
 }
 
 install_costrict() {
-  local base_dir="$HOME/.costrict/skills"
-
-  for skill in $SKILLS; do
-    mkdir -p "$base_dir/$skill"
-    echo "Downloading $skill..."
-    download "$BASE_URL/.opencode/skills/$skill/SKILL.md" "$base_dir/$skill/SKILL.md"
-  done
-
-  mkdir -p "$base_dir/shared"
-  echo "Downloading shared guidelines..."
-  download "$BASE_URL/.opencode/skills/shared/GUIDELINES.md" "$base_dir/shared/GUIDELINES.md"
+  install_skills "$HOME/.costrict/skills" ".opencode/skills"
 
   echo ""
   echo "=== AIInSight Skills installed (Costrict CLI) ==="
   echo ""
-  echo "Skills: $base_dir/"
+  echo "Skills: $HOME/.costrict/skills/"
   echo ""
-  echo "Next: Configure MCP connection"
+  echo "Next: Configure MCP connection in ~/.costrict/settings.json"
   echo "Then try: \"今日AI热点\" or \"帮我分析 GPT-5\""
 }
 
 install_vscode_costrict() {
-  local base_dir="$HOME/.costrict/skills"
-
-  for skill in $SKILLS; do
-    mkdir -p "$base_dir/$skill"
-    echo "Downloading $skill..."
-    download "$BASE_URL/.opencode/skills/$skill/SKILL.md" "$base_dir/$skill/SKILL.md"
-  done
-
-  mkdir -p "$base_dir/shared"
-  echo "Downloading shared guidelines..."
-  download "$BASE_URL/.opencode/skills/shared/GUIDELINES.md" "$base_dir/shared/GUIDELINES.md"
+  install_skills "$HOME/.roo/skills" ".opencode/skills"
 
   echo ""
-  echo "=== AIInSight Skills installed (VSCode Costrict) ==="
+  echo "=== AIInSight Skills installed (VSCode Costrict / Roo Code) ==="
   echo ""
-  echo "Skills: $base_dir/"
+  echo "Skills: $HOME/.roo/skills/"
   echo ""
-  echo "Next: Configure MCP connection"
+  echo "Next: Configure MCP connection in ~/.roo/mcp.json"
   echo "Then try: \"今日AI热点\" or \"帮我分析 GPT-5\""
 }
 
