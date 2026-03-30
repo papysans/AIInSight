@@ -330,7 +330,8 @@
     "novelty": 8,
     "impact": 9,
     "credibility": 7,
-    "total": 8.0
+    "timeliness": 10,
+    "total": 8.6
   },
   "source_urls": ["https://..."],
   "topic_id": "YYYYMMDD_hash8chars"
@@ -394,8 +395,12 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
 - Novelty（新颖度）：是否为首次报道/突破性进展
 - Impact（影响力）：对行业/用户的实际影响程度
 - Credibility（可信度）：信源质量和交叉验证程度
+- Timeliness（时效性）：距今越近分越高
+  - 今天发布 → 9-10 分
+  - 昨天发布 → 6-8 分
+  - 日期未知 → 上限 5 分
 
-输出格式：JSON { "novelty": N, "impact": N, "credibility": N, "total": N, "reasoning": "一句话理由" }
+输出格式：JSON { "novelty": N, "impact": N, "credibility": N, "timeliness": N, "total": N, "reasoning": "一句话理由" }
 ```
 
 ---
