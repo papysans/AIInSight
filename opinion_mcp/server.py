@@ -188,8 +188,14 @@ app.add_middleware(
 )
 
 
+_PUBLIC_PATH_PREFIXES = ("/health", "/admin/")
+
+
 @app.middleware("http")
 async def inject_account_context(request: Request, call_next):
+    if any(request.url.path.startswith(p) for p in _PUBLIC_PATH_PREFIXES):
+        set_account_id("_admin")
+        return await call_next(request)
     resolved = _validate_or_resolve_account_id(request)
     if isinstance(resolved, HTTPException):
         raise resolved
