@@ -139,13 +139,14 @@ https://raw.githubusercontent.com/papysans/AIInSight/main/README.md
 {
   "mcpServers": {
     "opinion-mcp": {
-      "type": "url",
-      "url": "http://YOUR_SERVER_IP:18061/mcp",
-      "headers": { "X-API-Key": "your-api-key" }
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://YOUR_SERVER_IP:18061/mcp", "--header", "X-API-Key:your-api-key"]
     }
   }
 }
 ```
+
+> Roo Code 不支持 `type: url`，需要通过 `mcp-remote` 桥接。本地部署时去掉 `--header` 参数。
 
 **Opencode（项目 `opencode.json`）：**
 
@@ -262,9 +263,8 @@ curl -fsSL "https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/
 {
   "mcpServers": {
     "opinion-mcp": {
-      "type": "url",
-      "url": "http://MCP_SERVER_ADDRESS:18061/mcp",
-      "headers": { "X-API-Key": "USER_API_KEY" }
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://MCP_SERVER_ADDRESS:18061/mcp", "--header", "X-API-Key:USER_API_KEY"]
     }
   }
 }

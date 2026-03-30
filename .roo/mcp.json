@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "aiinsight-mcp": {
-      "type": "streamable-http",
-      "url": "http://localhost:18061/mcp"
+    "opinion-mcp": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:18061/mcp"]
     }
   }
 }
