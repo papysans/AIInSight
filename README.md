@@ -242,39 +242,24 @@ Skill 是运行在你本地 AI Coding 平台上的工作流定义，所有分析
 
 #### Step 2：安装 Skill 文件
 
-从 GitHub 直接下载，无需克隆整个项目：
-
-**Claude Code：**
+一条命令安装，脚本自动检测平台并安装到正确路径：
 
 ```bash
-mkdir -p ~/.claude/skills/{ai-insight,ai-topic-analyzer,shared}
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.agents/skills/ai-insight/SKILL.md -o ~/.claude/skills/ai-insight/SKILL.md
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.agents/skills/ai-topic-analyzer/SKILL.md -o ~/.claude/skills/ai-topic-analyzer/SKILL.md
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.agents/skills/shared/GUIDELINES.md -o ~/.claude/skills/shared/GUIDELINES.md
+curl -fsSL https://raw.githubusercontent.com/papysans/AIInSight/main/install.sh | bash
 ```
 
-**Costrict CLI / VSCode Costrict 插件：**
+如果自动检测失败，可手动指定平台：
 
 ```bash
-mkdir -p ~/.costrict/skills/{ai-insight,ai-topic-analyzer,shared}
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/skills/ai-insight/SKILL.md -o ~/.costrict/skills/ai-insight/SKILL.md
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/skills/ai-topic-analyzer/SKILL.md -o ~/.costrict/skills/ai-topic-analyzer/SKILL.md
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/skills/shared/GUIDELINES.md -o ~/.costrict/skills/shared/GUIDELINES.md
+curl -fsSL https://raw.githubusercontent.com/papysans/AIInSight/main/install.sh | bash -s -- --platform <platform>
 ```
 
-**Opencode：**
-
-```bash
-mkdir -p ~/.opencode/skills/{ai-insight,ai-topic-analyzer,shared}
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/skills/ai-insight/SKILL.md -o ~/.opencode/skills/ai-insight/SKILL.md
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/skills/ai-topic-analyzer/SKILL.md -o ~/.opencode/skills/ai-topic-analyzer/SKILL.md
-curl -sL https://raw.githubusercontent.com/papysans/AIInSight/main/.opencode/skills/shared/GUIDELINES.md -o ~/.opencode/skills/shared/GUIDELINES.md
-```
+可选平台：`claude-code`、`opencode`、`costrict`、`vscode-costrict`
 
 | 平台 | 全局 Skill 路径 |
 |------|----------------|
 | Claude Code | `~/.claude/skills/` |
-| Costrict CLI / VSCode 插件 | `~/.costrict/skills/` |
+| Costrict CLI / VSCode Costrict | `~/.costrict/skills/` |
 | Opencode | `~/.opencode/skills/` |
 
 #### Step 3：确认 Web Search 可用
