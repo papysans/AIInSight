@@ -17,7 +17,7 @@
 {
   "specs": [
     {
-      "card_type": "hot-topic | impact | title | daily-rank | radar | timeline",
+      "card_type": "title | verdict | evidence | delta | action | hot-topic | impact | daily-rank | radar | timeline",
       "payload": {}
     }
   ]
@@ -35,15 +35,67 @@
 }
 ```
 
+#### `verdict`
+```json
+{
+  "title": "标题",
+  "verdict": "20-25字核心判断",
+  "why_now": "为什么这件事值得现在讲",
+  "confidence": 0.82,
+  "caveat": "结论边界 / 风险提醒",
+  "stance": "当前立场",
+  "tags": ["#AI"]
+}
+```
+
+#### `evidence`
+```json
+{
+  "title": "标题",
+  "entries": [
+    {
+      "claim": "关键证据",
+      "detail": "这条证据支持了什么判断",
+      "source": "来源名",
+      "strength": "High"
+    }
+  ],
+  "takeaway": "证据整体说明了什么",
+  "tags": ["#AI"]
+}
+```
+
+#### `delta`
+```json
+{
+  "title": "标题",
+  "opening": "初版判断",
+  "challenge": "最大质疑",
+  "revision": "修正结论",
+  "resolution": "为什么最后这样收束",
+  "confidence": 0.82
+}
+```
+
+#### `action`
+```json
+{
+  "title": "标题",
+  "strategy": "一句话执行策略",
+  "actions": ["现在就做什么"],
+  "watchouts": ["重点风险 / 观察点"],
+  "audience": "适用对象",
+  "tags": ["#AI"]
+}
+```
+
 #### `impact`
 ```json
 {
   "title": "标题",
   "summary": "20-25字摘要",
   "insight": "100字洞察",
-  "signals": [
-    { "label": "信号名称", "value": "Strong" }
-  ],
+  "signals": ["信号名称"],
   "actions": ["行动建议"],
   "confidence": 0.95,
   "tags": ["#AI"]
@@ -87,15 +139,18 @@
 ```json
 {
   "timeline": [
-    { "time": "10:00", "event": "事件描述", "impact": "high" }
+    { "round": 1, "title": "关键转折", "summary": "本轮发生了什么修正" }
   ]
 }
 ```
+
+> 说明：`impact` / `timeline` 仍保留兼容，但单话题默认推荐使用 `title + verdict + evidence + delta`，`action` 作为可选扩展卡。
 
 **Output Schema:**
 
 ```json
 {
+  "gallery_url": "http://...",
   "results": [
     {
       "success": true,
@@ -106,7 +161,7 @@
 }
 ```
 
-> ⚠️ **重要**：输出只返回 `output_path` + `image_url`，**不返回 base64**（避免撑爆 LLM 上下文）。
+> ⚠️ **重要**：输出返回 `output_path` / `image_url` / `gallery_url`，**不返回 base64**（避免撑爆 LLM 上下文）。
 
 ---
 
@@ -258,11 +313,6 @@
     "content": "小红书正文（800-1200字）",
     "tags": ["标签1", "标签2"]
   },
-  "debate_log": [
-    "Round 1: Analyst: ...",
-    "Debater: ...",
-    "Round 2: ..."
-  ],
   "sources": ["https://source1.com", "https://source2.com"]
 }
 ```
@@ -395,6 +445,29 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
 "AI" site:techcrunch.com latest
 ```
 
+### 4.4 Deep Search（垂直数据源深度检索）
+
+话题分析的 Phase 2.5 阶段，针对热点从垂直数据源执行定向 `site:` 搜索：
+
+| 类型 | 数据源 | 搜索语法 |
+|------|--------|---------|
+| **中文 AI 媒体** | AIBase | `"{topic}" site:aibase.com` |
+| | 机器之心 | `"{topic}" site:jiqizhixin.com` |
+| | 量子位 | `"{topic}" site:qbitai.com` |
+| **英文技术源** | TechCrunch | `"{topic}" site:techcrunch.com` |
+| | arXiv | `"{topic}" site:arxiv.org abstract {current_year}` |
+| | GitHub | `"{topic}" site:github.com trending` |
+
+**模式搜索量：**
+
+| 模式 | Deep Search 搜索量 | 策略 |
+|------|-------------------|------|
+| quick | 0（跳过） | — |
+| standard | 3-5 次 | 中文源优先 |
+| deep | 6-9 次 | 覆盖所有数据源 |
+
+**去重规则：** 按 URL 去重 → 按事件合并（保留所有 URL）→ 按时间排序插入。
+
 ---
 
 ## 5. 多宿主兼容说明
@@ -416,22 +489,24 @@ Skill 启动时检查 `requires` 中的工具可用性；若不满足，提前 f
 
 ---
 
-## 6. Debate 终止条件
+## 6. 置信度评估规则
 
-Debate 循环在以下任一条件满足时终止：
+Smart Synthesis 阶段基于证据质量自动计算置信度评分：
 
-1. **Debater 回复 `"PASS"`** → 分析通过，立即终止
-2. **达到 `max_rounds`**（默认 3 轮）→ 强制终止，取最新版本的分析结果
-3. **单轮无新质疑点**（Debater 重复上一轮的质疑）→ 终止，视为隐式 PASS
+| 条件 | 置信度 |
+|------|--------|
+| ≥5 条 High 可信度 + 覆盖 3 个维度（Technical/Market/Sentiment） | 0.8-1.0 |
+| 3-4 条 High 可信度 + 覆盖 2 个维度 | 0.65-0.79 |
+| 3-4 条 High 可信度 + 覆盖 1 个维度 | 0.5-0.64 |
+| <3 条 High 可信度 或 主要为 Low/Medium | <0.5 |
 
-终止后，`debate_log` 字段应记录完整的对话历史，格式：
+**可信度分级：**
 
-```
-Round 1: Analyst: <分析摘要>
-Round 1: Debater: <质疑内容>
-Round 2: Analyst: <修正版分析>
-Round 2: Debater: PASS
-```
+| 等级 | 来源类型 |
+|------|---------|
+| **High** | 主流科技媒体、官方博客、论文（TechCrunch、机器之心、arxiv.org 等） |
+| **Medium** | 社区讨论、行业分析（HN、Reddit、知乎） |
+| **Low** | 个人博客、未经证实的报道 |
 
 ---
 

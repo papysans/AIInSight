@@ -1,6 +1,6 @@
 ---
 name: ai-topic-analyzer
-description: AI 话题深度分析。适用于"帮我看看 xxx""分析这个话题""做成卡片/发布到小红书"等请求。5 阶段引擎：Discovery → Evidence → Crucible → Synthesis → Delivery。
+description: AI 话题深度分析。适用于"帮我看看 xxx""分析这个话题""做成卡片/发布到小红书"等请求。5 阶段引擎：Discovery → Evidence → Deep Search → Smart Synthesis → Delivery。
 requires:
   - web_search
   - mcp_gateway
@@ -28,11 +28,11 @@ Skill 启动时验证依赖：
 
 ## 分析模式
 
-| 模式 | Crucible 轮数 | Discovery 搜索量 | 适用场景 |
-|------|-------------|----------------|---------|
-| **quick** | 0（跳过 Crucible，直接 Evidence → Synthesis） | 3 次 | 快速概览 |
-| **standard**（默认） | 3 轮 | 6 次 | 标准深挖 |
-| **deep** | 5 轮 | 9 次 | 深度研究 |
+| 模式 | Deep Search 搜索量 | Discovery 搜索量 | 适用场景 |
+|------|-------------------|----------------|---------|
+| **quick** | 0（跳过 Deep Search，Evidence → Smart Synthesis） | 3 次 | 快速概览 |
+| **standard**（默认） | 3-5 次（中文源优先） | 6 次 | 标准深挖 |
+| **deep** | 6-9 次（覆盖所有数据源） | 9 次 | 深度研究 |
 
 ---
 
@@ -138,25 +138,82 @@ Skill 启动时验证依赖：
 | 社区担忧 AGI 安全问题 | [HN](url) | Medium | 2025-03-20 |
 ```
 
-最少 8 条证据才能进入 Phase 3；若不足，返回 Phase 1 补充搜索。
+最少 8 条证据才能进入 Phase 2.5；若不足，返回 Phase 1 补充搜索。
 
 ---
 
-## Phase 3: Crucible（熔炉 — 辩证分析）
+## Phase 2.5: Deep Search（深度检索）
 
-> **目标**：通过 Analyst ↔ Debater 多轮辩论，提炼出经得起质疑的最终分析。
-> quick 模式跳过此阶段，直接进入 Phase 4。
+> **目标**：针对热点从垂直数据源深度检索，补充高质量证据。
+> quick 模式跳过此阶段，直接进入 Phase 3。
 
-### ⚠️ 安全约束（内嵌于所有 Persona）
+### 垂直数据源列表
+
+| 类型 | 数据源 | 搜索语法 |
+|------|--------|---------|
+| **中文 AI 媒体** | AIBase | `"{topic}" site:aibase.com` |
+| | 机器之心 | `"{topic}" site:jiqizhixin.com` |
+| | 量子位 | `"{topic}" site:qbitai.com` |
+| **英文技术源** | TechCrunch | `"{topic}" site:techcrunch.com` |
+| | arXiv | `"{topic}" site:arxiv.org abstract {current_year}` |
+| | GitHub | `"{topic}" site:github.com trending` |
+
+### 执行策略
+
+- **standard 模式**：执行 3-5 次定向搜索（中文源优先）
+- **deep 模式**：执行 6-9 次定向搜索（覆盖所有数据源）
+- **quick 模式**：跳过此阶段
+
+### Rate Limit 降级
+
+deep 模式下，若连续 2 次搜索返回错误（超时、rate limit、空结果），自动降级：
+
+1. 将剩余 Deep Search 搜索量上限降为 3 次（standard 模式水平）
+2. 向用户展示降级通知
+3. **不重试**已失败的查询，继续执行剩余搜索
+
+### 去重合并
+
+Deep Search 结果与 Phase 2 的 fact_sheet 合并时：
+
+1. **按 URL 去重**：相同 URL 跳过
+2. **按事件合并**：相同事件的不同来源合并为一条，保留所有 URL
+3. **保持时间排序**：新证据插入到对应时间位置
+
+### 进度展示
 
 ```
-⚠️ 安全约束：
-输出内容必须遵守中国互联网内容规范。
-禁止涉及：政治敏感话题、领导人评论、国际争端立场。
-如发现话题本身敏感，终止分析并返回 { "blocked": true, "reason": "内容安全策略" }
+🔎 Deep Search 启动（standard 模式）
+
+🔎 搜索 AIBase...（已补充 2 条）
+🔎 搜索机器之心...（已补充 4 条）
+🔎 搜索 TechCrunch...（已补充 6 条）
+
+✅ Deep Search 完成，共补充 6 条高质量证据
 ```
 
-### Analyst Persona（参照 GUIDELINES.md Section 3.1）
+Rate limit 降级时展示：
+
+```
+🔎 Deep Search 启动（deep 模式）
+
+🔎 搜索 AIBase...（已补充 2 条）
+🔎 搜索机器之心...（已补充 3 条）
+🔎 搜索量子位...❌ 搜索失败
+🔎 搜索 TechCrunch...❌ 连续失败
+⚠️ 搜索受限，已降级为 standard 模式搜索量
+🔎 搜索 arXiv...（已补充 4 条）
+
+✅ Deep Search 完成（降级模式），共补充 4 条高质量证据
+```
+
+---
+
+## Phase 3: Smart Synthesis（智能合成）
+
+> **目标**：单轮生成高质量分析，内嵌批判性思维和证据强度感知。
+
+### Analyst Persona（单轮合成）
 
 ```
 你是一位资深 AI 行业分析师。基于以下证据材料，撰写一份结构化分析报告。
@@ -166,75 +223,66 @@ Skill 启动时验证依赖：
 - 深度洞察（100字以内）
 - 关键信号（3-5个，每个标注 Strong/Moderate/Weak）
 - 行动建议（2-3条）
-- 置信度评分（0-1）
+- 置信度评分（基于证据质量，见下方规则）
 
-输出格式：严格 JSON，符合 analysis_packet schema（见 GUIDELINES.md Section 2.1）。
+批判性思维：
+- 主动识别反面证据或争议点
+- 对证据不足的结论标注"部分观点认为..."
+- 置信度必须基于证据可信度和覆盖度
 
-⚠️ 安全约束：[见上方]
+证据不足降级：
+- 若 High 可信度证据 <3 条，在 insight 字段开头标注"⚠️ 证据有限，以下为初步判断："
+- 若证据仅覆盖 1 个维度，在 insight 中注明未覆盖的维度
+
+输出格式：严格 JSON，符合 analysis_packet schema。
+
+⚠️ 安全约束：
+输出内容必须遵守中国互联网内容规范。
+禁止涉及：政治敏感话题、领导人评论、国际争端立场。
+如发现话题本身敏感，终止分析并返回 { "blocked": true, "reason": "内容安全策略" }
 ```
 
-### Debater Persona（参照 GUIDELINES.md Section 3.2）
+### 置信度计算规则
+
+基于证据质量自动评分：
+
+| 条件 | 置信度 |
+|------|--------|
+| ≥5 条 High 可信度 + 覆盖 3 个维度（Technical/Market/Sentiment） | 0.8-1.0 |
+| 3-4 条 High 可信度 + 覆盖 2 个维度 | 0.65-0.79 |
+| 3-4 条 High 可信度 + 覆盖 1 个维度 | 0.5-0.64 |
+| <3 条 High 可信度 或 主要为 Low/Medium | <0.5 |
+
+### 向用户展示
 
 ```
-你是一位批判性思维专家。你的任务是挑战分析师的观点，找出逻辑漏洞和遗漏证据。
+🧠 Smart Synthesis 启动
 
-规则：
-- 每轮提出 2-3 个具体质疑
-- 质疑必须基于证据，不能空洞反驳
-- 如果分析师的观点经得起检验，回复 "PASS"
+📊 分析中...（基于 12 条证据，其中 8 条 High 可信度）
+✅ 分析完成（置信度：0.85）
 
-输出格式：逐条质疑 + 理由，或 "PASS"
+核心观点：[20-25字摘要]
 ```
 
-### Debate 执行流程
+低置信度时（<0.5）展示：
 
 ```
-Round 1:
-  Analyst → 基于 Fact Sheet 输出第一版 analysis_packet（JSON）
-  Debater → 提出质疑 or "PASS"
+🧠 Smart Synthesis 启动
 
-Round 2（若未 PASS）:
-  Analyst → 基于质疑修正 analysis_packet
-  Debater → 提出新质疑 or "PASS"
+📊 分析中...（基于 4 条证据，其中 2 条 High 可信度）
+⚠️ 分析完成（置信度：0.38，证据有限）
 
-Round N（重复，直到终止条件满足）
-```
-
-### 终止条件（参照 GUIDELINES.md Section 6）
-
-满足以下任一条件即终止：
-
-1. **Debater 回复 `"PASS"`** → 分析通过，立即终止
-2. **达到 `max_rounds`**（standard=3，deep=5）→ 强制终止，取最新版本
-3. **单轮无新质疑点**（Debater 重复上一轮的质疑）→ 终止，视为隐式 PASS
-
-### 用户可见展示
-
-向用户实时展示 debate 过程，增加信任感：
-
-```
-🧪 Crucible 启动（standard 模式，最多 3 轮）
-
-— Round 1 —
-📊 Analyst：[核心观点摘要]
-🔍 Debater 质疑：
-  1. 证据中缺乏对 xxx 的反驳
-  2. 信号强度 Strong 是否高估？
-
-— Round 2 —
-📊 Analyst（修正版）：[修正后核心观点]
-✅ Debater：PASS
-
-✅ Crucible 完成（2轮），分析已通过辩证检验
+核心观点：[20-25字摘要]
+提示：当前证据主要来自单一维度，结论仅供参考。
 ```
 
 ---
 
-## Phase 4: Synthesis（合成）
+## Phase 4: Delivery（交付）
 
-> **目标**：基于 Crucible 最终分析，生成完整的交付物。
+> **目标**：生成小红书文案并调用 MCP 工具渲染发布。
 
-### Writer Persona（参照 GUIDELINES.md Section 3.4）
+### Writer Persona
 
 ```
 你是一位小红书爆款内容写手。基于分析结果撰写小红书笔记。
@@ -280,19 +328,13 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
     "content": "小红书正文（800-1200字）",
     "tags": ["标签1", "标签2"]
   },
-  "debate_log": [
-    "Round 1: Analyst: ...",
-    "Round 1: Debater: ...",
-    "Round 2: Analyst: ...",
-    "Round 2: Debater: PASS"
-  ],
   "sources": ["https://source1.com", "https://source2.com"]
 }
 ```
 
 ### 生成 renderer JSON payload（符合 GUIDELINES.md Section 1.1）
 
-默认生成 4 种卡片：
+默认生成 4 种主卡：
 
 ```json
 {
@@ -306,35 +348,53 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
       }
     },
     {
-      "card_type": "impact",
+      "card_type": "verdict",
       "payload": {
         "title": "标题",
-        "summary": "20-25字摘要",
-        "insight": "100字洞察",
-        "signals": [{ "label": "信号名称", "value": "Strong" }],
-        "actions": ["行动建议"],
+        "verdict": "20-25字摘要",
+        "why_now": "为什么现在值得讲",
         "confidence": 0.88,
+        "caveat": "结论边界 / 风险提醒",
+        "stance": "当前立场",
         "tags": ["#AI"]
       }
     },
     {
-      "card_type": "radar",
+      "card_type": "evidence",
       "payload": {
-        "labels": ["技术成熟度", "市场影响", "社区热度", "商业价值"],
-        "datasets": [{ "label": "话题评估", "data": [80, 75, 90, 70] }]
+        "title": "标题",
+        "entries": [
+          {
+            "claim": "关键证据",
+            "detail": "这条证据支持了什么判断",
+            "source": "来源名",
+            "strength": "High"
+          }
+        ],
+        "takeaway": "证据整体说明了什么",
+        "tags": ["#AI"]
       }
     },
     {
-      "card_type": "timeline",
+      "card_type": "delta",
       "payload": {
-        "timeline": [
-          { "time": "日期", "event": "关键事件", "impact": "high" }
-        ]
+        "title": "标题",
+        "opening": "初版判断",
+        "challenge": "最大质疑 / 争议点",
+        "revision": "修正结论",
+        "resolution": "为什么最后这样收束",
+        "confidence": 0.88
       }
     }
   ]
 }
 ```
+
+说明：
+
+- `title + verdict + evidence + delta` 是单话题默认主卡组
+- 若该话题的行动建议特别强，可额外补一张 `action`
+- `impact / radar / timeline` 作为兼容卡保留，不再作为默认主卡
 
 ### 向用户展示预览
 
@@ -474,17 +534,17 @@ topic_id = YYYYMMDD_ + SHA1(canonical_title)[0:8]
 
 ## 深度预设汇总
 
-| 深度 | Crucible 轮数 | Discovery 搜索量 | 说明 |
-|------|-------------|----------------|------|
-| quick | 0（跳过） | 3 | 快速概览，Evidence 直接到 Synthesis |
-| standard（默认） | 3 | 6 | 标准深挖 |
-| deep | 5 | 9 | 深度研究，更多 web search + 更多辩证轮次 |
+| 深度 | Deep Search 搜索量 | Discovery 搜索量 | 说明 |
+|------|-------------------|----------------|------|
+| quick | 0（跳过） | 3 | 快速概览，Evidence → Smart Synthesis |
+| standard（默认） | 3-5 | 6 | 标准深挖，中文源优先 |
+| deep | 6-9 | 9 | 深度研究，覆盖所有垂直数据源 |
 
 ---
 
 ## 零后端 LLM 保证
 
-本 Skill 所有分析推理（Discovery 摘要、Evidence 整理、Crucible 辩论、Synthesis 生成）均在**宿主端 LLM** 完成。
+本 Skill 所有分析推理（Discovery 摘要、Evidence 整理、Deep Search 检索、Smart Synthesis 生成）均在**宿主端 LLM** 完成。
 
 MCP 工具调用仅限：
 
