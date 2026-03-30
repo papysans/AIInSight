@@ -92,9 +92,6 @@ cp .env.example .env
 编辑 `.env`，填入必需的配置：
 
 ```env
-# LLM API Key（至少配一个）
-DEEPSEEK_API_KEYS=sk-xxx
-
 # 云端部署必填
 OPINION_REQUIRE_API_KEY=true
 OPINION_ADMIN_TOKEN=your-secret-admin-token
@@ -302,17 +299,6 @@ allow_origins=["https://mcp.example.com"]
 | `XHS_MCP_REQUEST_INTERVAL` | `2000` | 请求间隔（毫秒） |
 | `XHS_MCP_LOG_LEVEL` | `info` | 日志级别 |
 | `XHS_LOGIN_QRCODE_TIMEOUT_SECONDS` | `60` | 二维码超时 |
-
-### LLM API Keys
-
-| 变量 | 说明 |
-|------|------|
-| `MOONSHOT_API_KEYS` | 月之暗面 API Key（逗号分隔多个） |
-| `DEEPSEEK_API_KEYS` | 深度求索 API Key |
-| `DOUBAO_API_KEYS` | 字节豆包 API Key |
-| `ZHIPU_API_KEYS` | 智谱清言 API Key |
-| `GEMINI_API_KEYS` | Google Gemini API Key |
-| `VOLC_ACCESS_KEY` / `VOLC_SECRET_KEY` | 火山引擎（文生图） |
 
 ---
 
