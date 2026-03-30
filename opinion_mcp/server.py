@@ -188,7 +188,7 @@ app.add_middleware(
 )
 
 
-_PUBLIC_PATH_PREFIXES = ("/health", "/admin/")
+_PUBLIC_PATH_PREFIXES = ("/health", "/admin/", "/card-previews/")
 
 
 @app.middleware("http")
@@ -204,17 +204,18 @@ async def inject_account_context(request: Request, call_next):
 
 
 @app.get("/card-previews/gallery", response_class=HTMLResponse)
-async def get_card_preview_gallery(request: Request, file: Optional[List[str]] = None):
+async def get_card_preview_gallery(request: Request, file: Optional[List[str]] = None, account: Optional[str] = None):
     """返回卡片预览画廊页，便于宿主浏览器直接查看最近一次渲染结果。"""
+    acct = account or get_account_id()
     candidates = file or []
     resolved_files = []
     for name in candidates:
-        file_path = resolve_card_preview_file_path(name, account_id=get_account_id())
+        file_path = resolve_card_preview_file_path(name, account_id=acct)
         if file_path:
             resolved_files.append(file_path)
 
     if not resolved_files:
-        preview_dir = get_card_preview_output_dir(account_id=get_account_id())
+        preview_dir = get_card_preview_output_dir(account_id=acct)
         resolved_files = sorted(
             preview_dir.glob("*.png"),
             key=lambda path: path.stat().st_mtime,
@@ -224,7 +225,7 @@ async def get_card_preview_gallery(request: Request, file: Optional[List[str]] =
     cards = []
     for file_path in resolved_files:
         image_url = str(
-            request.url_for("get_card_preview_file", filename=file_path.name)
+            request.url_for("get_card_preview_file", account_id=acct, filename=file_path.name)
         )
         cards.append(
             f"""
@@ -342,10 +343,10 @@ async def get_card_preview_gallery(request: Request, file: Optional[List[str]] =
     )
 
 
-@app.get("/card-previews/{filename}", name="get_card_preview_file")
-async def get_card_preview_file(filename: str):
-    """返回当前账号的卡片预览图片文件。"""
-    file_path = resolve_card_preview_file_path(filename, account_id=get_account_id())
+@app.get("/card-previews/{account_id}/{filename}", name="get_card_preview_file")
+async def get_card_preview_file(account_id: str, filename: str):
+    """返回指定账号的卡片预览图片文件（公开路径，无需 API Key）。"""
+    file_path = resolve_card_preview_file_path(filename, account_id=account_id)
     if not file_path:
         raise HTTPException(status_code=404, detail="卡片预览文件不存在")
     return FileResponse(file_path, media_type="image/png", filename=file_path.name)

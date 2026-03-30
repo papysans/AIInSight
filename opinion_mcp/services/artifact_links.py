@@ -29,20 +29,22 @@ def get_card_preview_output_dir(account_id: Optional[str] = None) -> Path:
     return (Path(preview_dir) / (account_id or get_account_id())).resolve()
 
 
-def build_card_preview_route(filename: str) -> str:
+def build_card_preview_route(filename: str, account_id: Optional[str] = None) -> str:
     safe_name = Path(filename).name
-    return f"/card-previews/{safe_name}"
+    acct = account_id or get_account_id()
+    return f"/card-previews/{acct}/{safe_name}"
 
 
 def build_card_preview_url(filename: str) -> str:
     return f"{get_card_preview_public_base_url()}{build_card_preview_route(filename)}"
 
 
-def build_card_preview_gallery_route(filenames: Iterable[str]) -> Optional[str]:
+def build_card_preview_gallery_route(filenames: Iterable[str], account_id: Optional[str] = None) -> Optional[str]:
     safe_names = [Path(filename).name for filename in filenames if filename]
     if not safe_names:
         return None
-    query = urlencode([("file", filename) for filename in safe_names])
+    acct = account_id or get_account_id()
+    query = urlencode([("file", filename) for filename in safe_names] + [("account", acct)])
     return f"/card-previews/gallery?{query}"
 
 
